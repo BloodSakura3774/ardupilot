@@ -362,8 +362,12 @@ class AutoTestHelicopter(AutoTestCopter):
                            timeout=timeout)
         self.context_collect('STATUSTEXT')
         self.progress("Triggering autorotate by raising interlock")
+        self.set_rc(3, 1000)
         self.set_rc(8, 1000)
+
         self.wait_statustext("SS Glide Phase", check_context=True)
+
+        self.change_mode('STABILIZE')
         self.wait_statustext(r"SIM Hit ground at ([0-9.]+) m/s",
                              check_context=True,
                              regex=True)
