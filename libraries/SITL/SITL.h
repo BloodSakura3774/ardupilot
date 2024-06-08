@@ -49,6 +49,7 @@ struct float_array {
 };
 
 class StratoBlimp;
+class Glider;
 
 struct sitl_fdm {
     // this is the structure passed between FDM models and the main SITL code
@@ -62,8 +63,8 @@ struct sitl_fdm {
     double rollRate, pitchRate, yawRate; // degrees/s in body frame
     double rollDeg, pitchDeg, yawDeg;    // euler angles, degrees
     Quaternion quaternion;
-    double airspeed; // m/s
-    Vector3f velocity_air_bf; // velocity relative to airmass, body frame
+    double airspeed; // m/s, EAS
+    Vector3f velocity_air_bf; // velocity relative to airmass, body frame, TAS
     double battery_voltage; // Volts
     double battery_current; // Amps
     double battery_remaining; // Ah, if non-zero capacity
@@ -183,7 +184,6 @@ public:
     AP_Int8 mag_orient[HAL_COMPASS_MAX_SENSORS];   // external compass orientation
     AP_Int8 mag_fail[HAL_COMPASS_MAX_SENSORS];   // fail magnetometer, 1 for no data, 2 for freeze
     AP_Int8 mag_save_ids;
-    AP_Float servo_speed; // servo speed in seconds
 
     AP_Float sonar_glitch;// probability between 0-1 that any given sonar sample will read as max distance
     AP_Float sonar_noise; // in metres
@@ -297,6 +297,18 @@ public:
     };
     AirspeedParm airspeed[AIRSPEED_MAX_SENSORS];
 
+    class ServoParams {
+    public:
+        ServoParams(void) {
+            AP_Param::setup_object_defaults(this, var_info);
+        }
+        static const struct AP_Param::GroupInfo var_info[];
+        AP_Float servo_speed; // servo speed in seconds per 60 degrees
+        AP_Float servo_delay; // servo delay in seconds
+        AP_Float servo_filter; // servo 2p filter in Hz
+    };
+    ServoParams servo;
+    
     // physics model parameters
     class ModelParm {
     public:
@@ -306,6 +318,9 @@ public:
 #endif
 #if AP_SIM_SHIP_ENABLED
         ShipSim shipsim;
+#endif
+#if AP_SIM_GLIDER_ENABLED
+        Glider *glider_ptr;
 #endif
     };
     ModelParm models;
@@ -334,6 +349,7 @@ public:
     AP_Float wind_direction;
     AP_Float wind_turbulance;
     AP_Float wind_dir_z;
+    AP_Float wind_change_tc;
     AP_Int8  wind_type; // enum WindLimitType
     AP_Float wind_type_alt;
     AP_Float wind_type_coef;

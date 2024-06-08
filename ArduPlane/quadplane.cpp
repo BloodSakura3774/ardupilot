@@ -103,7 +103,7 @@ const AP_Param::GroupInfo QuadPlane::var_info[] = {
 
     // @Param: ASSIST_SPEED
     // @DisplayName: Quadplane assistance speed
-    // @Description: This is the speed below which the quad motors will provide stability and lift assistance in fixed wing modes. Zero means no assistance except during transition. Note that if this is set to zero then other Q_ASSIST features are also disabled. A higher value will lead to more false positives which can waste battery. A lower value will result in less false positive, but will result in assistance taking longer to trigger. If unsure then set to 3 m/s below the minimum airspeed you will fly at. If you don't have an airspeed sensor then use 5 m/s below the minimum airspeed you fly at. If you want to disable the arming check Q_ASSIST_SPEED then set to -1.
+    // @Description: This is the speed below which the quad motors will provide stability and lift assistance in fixed wing modes. The default value of 0 disables assistance but will generate a pre-arm failure to encourage users to set this parameter to -1, or a positive, non-zero value. If this is set to -1 then all Q_ASSIST features are disabled except during transitions. A high non-zero,positive value will lead to more false positives which can waste battery. A lower value will result in less false positive, but will result in assistance taking longer to trigger. If unsure then set to 3 m/s below the minimum airspeed you will fly at. If you don't have an airspeed sensor then use 5 m/s below the minimum airspeed you fly at.
     // @Units: m/s
     // @Range: 0 100
     // @Increment: 0.1
@@ -231,7 +231,7 @@ const AP_Param::GroupInfo QuadPlane::var_info[] = {
     
     // @Param: ASSIST_ANGLE
     // @DisplayName: Quadplane assistance angle
-    // @Description: This is the angular error in attitude beyond which the quadplane VTOL motors will provide stability assistance. This will only be used if Q_ASSIST_SPEED is also non-zero. Assistance will be given if the attitude is outside the normal attitude limits by at least 5 degrees and the angular error in roll or pitch is greater than this angle for at least Q_ASSIST_DELAY seconds. Set to zero to disable angle assistance.
+    // @Description: This is the angular error in attitude beyond which the quadplane VTOL motors will provide stability assistance. This will only be used if Q_ASSIST_SPEED is also positive and non-zero. Assistance will be given if the attitude is outside the normal attitude limits by at least 5 degrees and the angular error in roll or pitch is greater than this angle for at least Q_ASSIST_DELAY seconds. Set to zero to disable angle assistance.
     // @Units: deg
     // @Range: 0 90
     // @Increment: 1
@@ -310,7 +310,7 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
 
     // @Param: TRIM_PITCH
     // @DisplayName: Quadplane AHRS trim pitch
-    // @Description: This sets the compensation for the pitch angle trim difference between calibrated AHRS level and vertical flight pitch. NOTE! this is relative to calibrated AHRS trim, not forward flight trim which includes TRIM_PITCH. For tailsitters, this is relative to a baseline of 90 degrees in AHRS.
+    // @Description: This sets the compensation for the pitch angle trim difference between calibrated AHRS level and vertical flight pitch. NOTE! this is relative to calibrated AHRS trim, not forward flight trim which includes PTCH_TRIM_DEG. For tailsitters, this is relative to a baseline of 90 degrees in AHRS.
     // @Units: deg
     // @Range: -10 +10
     // @Increment: 0.1
@@ -745,23 +745,23 @@ bool QuadPlane::setup(void)
 
     switch ((AP_Motors::motor_frame_class)frame_class) {
     case AP_Motors::MOTOR_FRAME_TRI:
-        motors = new AP_MotorsTri(rc_speed);
+        motors = NEW_NOTHROW AP_MotorsTri(rc_speed);
         motors_var_info = AP_MotorsTri::var_info;
         break;
     case AP_Motors::MOTOR_FRAME_TAILSITTER:
         // this is a duo-motor tailsitter
-        tailsitter.tailsitter_motors = new AP_MotorsTailsitter(rc_speed);
+        tailsitter.tailsitter_motors = NEW_NOTHROW AP_MotorsTailsitter(rc_speed);
         motors = tailsitter.tailsitter_motors;
         motors_var_info = AP_MotorsTailsitter::var_info;
         break;
     case AP_Motors::MOTOR_FRAME_DYNAMIC_SCRIPTING_MATRIX:
 #if AP_SCRIPTING_ENABLED
-            motors = new AP_MotorsMatrix_Scripting_Dynamic(plane.scheduler.get_loop_rate_hz());
+            motors = NEW_NOTHROW AP_MotorsMatrix_Scripting_Dynamic(plane.scheduler.get_loop_rate_hz());
             motors_var_info = AP_MotorsMatrix_Scripting_Dynamic::var_info;
 #endif // AP_SCRIPTING_ENABLED
             break;
     default:
-        motors = new AP_MotorsMatrix(rc_speed);
+        motors = NEW_NOTHROW AP_MotorsMatrix(rc_speed);
         motors_var_info = AP_MotorsMatrix::var_info;
         break;
     }
@@ -778,30 +778,30 @@ bool QuadPlane::setup(void)
         AP_BoardConfig::allocation_error("ahrs_view");
     }
 
-    attitude_control = new AC_AttitudeControl_TS(*ahrs_view, aparm, *motors);
+    attitude_control = NEW_NOTHROW AC_AttitudeControl_TS(*ahrs_view, aparm, *motors);
     if (!attitude_control) {
         AP_BoardConfig::allocation_error("attitude_control");
     }
 
     AP_Param::load_object_from_eeprom(attitude_control, attitude_control->var_info);
-    pos_control = new AC_PosControl(*ahrs_view, inertial_nav, *motors, *attitude_control);
+    pos_control = NEW_NOTHROW AC_PosControl(*ahrs_view, inertial_nav, *motors, *attitude_control);
     if (!pos_control) {
         AP_BoardConfig::allocation_error("pos_control");
     }
     AP_Param::load_object_from_eeprom(pos_control, pos_control->var_info);
-    wp_nav = new AC_WPNav(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
+    wp_nav = NEW_NOTHROW AC_WPNav(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
     if (!wp_nav) {
         AP_BoardConfig::allocation_error("wp_nav");
     }
     AP_Param::load_object_from_eeprom(wp_nav, wp_nav->var_info);
 
-    loiter_nav = new AC_Loiter(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
+    loiter_nav = NEW_NOTHROW AC_Loiter(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
     if (!loiter_nav) {
         AP_BoardConfig::allocation_error("loiter_nav");
     }
     AP_Param::load_object_from_eeprom(loiter_nav, loiter_nav->var_info);
 
-    weathervane = new AC_WeatherVane();
+    weathervane = NEW_NOTHROW AC_WeatherVane();
     if (!weathervane) {
         AP_BoardConfig::allocation_error("weathervane");
     }
@@ -843,7 +843,7 @@ bool QuadPlane::setup(void)
     tiltrotor.setup();
 
     if (!transition) {
-        transition = new SLT_Transition(*this, motors);
+        transition = NEW_NOTHROW SLT_Transition(*this, motors);
     }
     if (!transition) {
         AP_BoardConfig::allocation_error("transition");
@@ -1417,7 +1417,7 @@ float QuadPlane::assist_climb_rate_cms(void) const
     float climb_rate;
     if (plane.control_mode->does_auto_throttle()) {
         // use altitude_error_cm, spread over 10s interval
-        climb_rate = plane.altitude_error_cm * 0.1f;
+        climb_rate = plane.calc_altitude_error_cm() * 0.1f;
     } else {
         // otherwise estimate from pilot input
         climb_rate = plane.g.flybywire_climb_rate * (plane.nav_pitch_cd/(plane.aparm.pitch_limit_max*100));
@@ -3658,6 +3658,9 @@ void QuadPlane::Log_Write_QControl_Tuning()
 
     // write multicopter position control message
     pos_control->write_log();
+
+    // Write tiltrotor tilt angle log
+    tiltrotor.write_log();
 }
 #endif
 

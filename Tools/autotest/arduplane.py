@@ -3946,6 +3946,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             "quadplane-ice" : "needs ICE control channel for ignition",
             "quadplane-can" : "needs CAN periph",
             "stratoblimp" : "not expected to fly normally",
+            "glider" : "needs balloon lift",
         }
         for frame in sorted(vinfo_options["frames"].keys()):
             self.start_subtest("Testing frame (%s)" % str(frame))
@@ -5339,6 +5340,22 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.drain_mav()
         self.assert_servo_channel_value(3, servo_min)
 
+    def ClimbThrottleSaturation(self):
+        '''check what happens when throttle is saturated in GUIDED'''
+        self.set_parameters({
+            "TECS_CLMB_MAX": 30,
+            "TKOFF_ALT": 1000,
+        })
+
+        self.change_mode("TAKEOFF")
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.wait_message_field_values('VFR_HUD', {
+            "throttle": 100,
+        }, minimum_duration=30, timeout=90)
+        self.disarm_vehicle(force=True)
+        self.reboot_sitl()
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestPlane, self).tests()
@@ -5448,6 +5465,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.MAV_CMD_NAV_LOITER_UNLIM,
             self.MAV_CMD_NAV_RETURN_TO_LAUNCH,
             self.MinThrottle,
+            self.ClimbThrottleSaturation,
         ])
         return ret
 
@@ -5455,4 +5473,5 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         return {
             "LandingDrift": "Flapping test. See https://github.com/ArduPilot/ardupilot/issues/20054",
             "InteractTest": "requires user interaction",
+            "ClimbThrottleSaturation": "requires https://github.com/ArduPilot/ardupilot/pull/27106 to pass",
         }

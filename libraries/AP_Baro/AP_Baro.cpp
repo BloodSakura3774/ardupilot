@@ -173,7 +173,7 @@ const AP_Param::GroupInfo AP_Baro::var_info[] = {
     // @Increment: 1
     AP_GROUPINFO("_FLTR_RNG", 13, AP_Baro, _filter_range, HAL_BARO_FILTER_DEFAULT),
 
-#if AP_BARO_PROBE_EXTERNAL_I2C_BUSES || AP_BARO_MSP_ENABLED
+#if AP_BARO_PROBE_EXT_PARAMETER_ENABLED
     // @Param: _PROBE_EXT
     // @DisplayName: External barometers to probe
     // @Description: This sets which types of external i2c barometer to look for. It is a bitmask of barometer types. The I2C buses to probe is based on BARO_EXT_BUS. If BARO_EXT_BUS is -1 then it will probe all external buses, otherwise it will probe just the bus number given in BARO_EXT_BUS.
@@ -351,7 +351,7 @@ void AP_Baro::calibrate(bool save)
             sensors[i].calibrated = false;
         } else {
             if (save) {
-                float p0_sealevel = get_sealevel_pressure(sum_pressure[i] / count[i]);
+                float p0_sealevel = get_sealevel_pressure(sum_pressure[i] / count[i], _field_elevation_active);
                 sensors[i].ground_pressure.set_and_save(p0_sealevel);
             }
         }
@@ -387,7 +387,7 @@ void AP_Baro::update_calibration()
     }
     for (uint8_t i=0; i<_num_sensors; i++) {
         if (healthy(i)) {
-            float corrected_pressure = get_sealevel_pressure(get_pressure(i) + sensors[i].p_correction);
+            float corrected_pressure = get_sealevel_pressure(get_pressure(i) + sensors[i].p_correction, _field_elevation_active);
             sensors[i].ground_pressure.set(corrected_pressure);
         }
 
@@ -401,60 +401,11 @@ void AP_Baro::update_calibration()
     _guessed_ground_temperature = get_external_temperature();
 }
 
-// return altitude difference in meters between current pressure and a
-// given base_pressure in Pascal
-float AP_Baro::get_altitude_difference(float base_pressure, float pressure) const
-{
-    float temp    = C_TO_KELVIN(get_ground_temperature());
-    float scaling = pressure / base_pressure;
-
-    // This is an exact calculation that is within +-2.5m of the standard
-    // atmosphere tables in the troposphere (up to 11,000 m amsl).
-    return 153.8462f * temp * (1.0f - expf(0.190259f * logf(scaling)))-_field_elevation_active;
-}
-
-// return sea level pressure where in which the current measured pressure
-// at field elevation returns the same altitude under the
-// 1976 standard atmospheric model
-float AP_Baro::get_sealevel_pressure(float pressure) const
-{
-    float temp    = C_TO_KELVIN(get_ground_temperature());
-    float p0_sealevel;
-    // This is an exact calculation that is within +-2.5m of the standard
-    // atmosphere tables in the troposphere (up to 11,000 m amsl).
-    p0_sealevel = 8.651154799255761e30f*pressure*powF((769231.0f-(5000.0f*_field_elevation_active)/temp),-5.255993146184937f);
-
-    return p0_sealevel;
-}
-
-
-// return current scale factor that converts from equivalent to true airspeed
-// valid for altitudes up to 10km AMSL
-// assumes standard atmosphere lapse rate
-float AP_Baro::get_EAS2TAS(void)
-{
-    float altitude = get_altitude();
-
-    float pressure = get_pressure();
-    if (is_zero(pressure)) {
-        return 1.0f;
-    }
-
-    // only estimate lapse rate for the difference from the ground location
-    // provides a more consistent reading then trying to estimate a complete
-    // ISA model atmosphere
-    float tempK = C_TO_KELVIN(get_ground_temperature()) - ISA_LAPSE_RATE * altitude;
-    const float eas2tas_squared = SSL_AIR_DENSITY / (pressure / (ISA_GAS_CONSTANT * tempK));
-    if (!is_positive(eas2tas_squared)) {
-        return 1.0f;
-    }
-    return sqrtf(eas2tas_squared);
-}
 
 // return air density / sea level density - decreases as altitude climbs
-float AP_Baro::get_air_density_ratio(void)
+float AP_Baro::_get_air_density_ratio(void)
 {
-    const float eas2tas = get_EAS2TAS();
+    const float eas2tas = _get_EAS2TAS();
     if (eas2tas > 0.0f) {
         return 1.0f/(sq(eas2tas));
     } else {
@@ -596,7 +547,7 @@ void AP_Baro::init(void)
 #if !AP_TEST_DRONECAN_DRIVERS
     // use dronecan instances instead of SITL instances
     for(uint8_t i = 0; i < sitl->baro_count; i++) {
-        ADD_BACKEND(new AP_Baro_SITL(*this));
+        ADD_BACKEND(NEW_NOTHROW AP_Baro_SITL(*this));
     }
 #endif
 #endif
@@ -611,7 +562,7 @@ void AP_Baro::init(void)
 #if AP_BARO_EXTERNALAHRS_ENABLED
     const int8_t serial_port = AP::externalAHRS().get_port(AP_ExternalAHRS::AvailableSensor::BARO);
     if (serial_port >= 0) {
-        ADD_BACKEND(new AP_Baro_ExternalAHRS(*this, serial_port));
+        ADD_BACKEND(NEW_NOTHROW AP_Baro_ExternalAHRS(*this, serial_port));
     }
 #endif
 
@@ -765,7 +716,7 @@ void AP_Baro::init(void)
     }
     for (uint8_t i=0; i<8; i++) {
         if (msp_instance_mask & (1U<<i)) {
-            ADD_BACKEND(new AP_Baro_MSP(*this, i));
+            ADD_BACKEND(NEW_NOTHROW AP_Baro_MSP(*this, i));
         }
     }
 #endif
@@ -923,6 +874,9 @@ void AP_Baro::update(void)
                 corrected_pressure -= wind_pressure_correction(i);
 #endif
                 altitude = get_altitude_difference(sensors[i].ground_pressure, corrected_pressure);
+
+                // the ground pressure is references against the field elevation
+                altitude -= _field_elevation_active;
             } else if (sensors[i].type == BARO_TYPE_WATER) {
                 //101325Pa is sea level air pressure, 9800 Pascal/ m depth in water.
                 //No temperature or depth compensation for density of water.
@@ -1117,7 +1071,7 @@ bool AP_Baro::arming_checks(size_t buflen, char *buffer) const
     if (_alt_error_max > 0 && gps.status() >= AP_GPS::GPS_Status::GPS_OK_FIX_3D) {
         const float alt_amsl = gps.location().alt*0.01;
         // note the addition of _field_elevation_active as this is subtracted in get_altitude_difference()
-        const float alt_pressure = get_altitude_difference(SSL_AIR_PRESSURE, get_pressure()) + _field_elevation_active;
+        const float alt_pressure = get_altitude_difference(SSL_AIR_PRESSURE, get_pressure());
         const float error = fabsf(alt_amsl - alt_pressure);
         if (error > _alt_error_max) {
             hal.util->snprintf(buffer, buflen, "GPS alt error %.0fm (see BARO_ALTERR_MAX)", error);

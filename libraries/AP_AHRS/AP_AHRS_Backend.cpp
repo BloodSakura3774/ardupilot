@@ -167,7 +167,7 @@ AP_AHRS_View *AP_AHRS::create_view(enum Rotation rotation, float pitch_trim_deg)
         // can only have one
         return nullptr;
     }
-    _view = new AP_AHRS_View(*this, rotation, pitch_trim_deg);
+    _view = NEW_NOTHROW AP_AHRS_View(*this, rotation, pitch_trim_deg);
     return _view;
 }
 
@@ -265,7 +265,7 @@ void AP_AHRS::Log_Write_Home_And_Origin()
 
 // get apparent to true airspeed ratio
 float AP_AHRS_Backend::get_EAS2TAS(void) {
-    return AP::baro().get_EAS2TAS();
+    return AP::baro()._get_EAS2TAS();
 }
 
 // return current vibration vector for primary IMU

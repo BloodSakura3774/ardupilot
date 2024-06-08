@@ -274,8 +274,15 @@ AP_HW_BlitzH7Pro                     1162
 AP_HW_BlitzF7Mini                    1163
 AP_HW_BlitzF7                        1164
 AP_HW_MicoAir743                     1166
+AP_HW_BlitzH7Wing                    1168
+AP_HW_SDMODELH7V2                    1167
 
 AP_HW_JHEMCUF405WING                 1169
+AP_HW_MatekG474                      1170
+AP_HW_PhenixH7_lite                  1171
+AP_HW_PhenixH7_Pro                   1172
+
+AP_HW_FlywooF405HD_AIOv2             1180
 
 AP_HW_ESP32_PERIPH                   1205
 AP_HW_ESP32S3_PERIPH                 1206
@@ -296,6 +303,10 @@ AP_HW_RadiolinkPIX6                  1410
 
 AP_HW_JHEMCU-H743HD                  1411
 
+AP_HW_LongbowF405                    1422
+
+AP_HW_MountainEagleH743              1444
+
 AP_HW_SakuraRC-H743                  2714
 
 # IDs 5000-5099 reserved for Carbonix
@@ -306,6 +317,15 @@ AP_HW_AIRVOLUTE_DCS2                 5200
 # IDs 5210-5219 reserved for Aocoda-RC
 AP_HW_AOCODA-RC-H743DUAL             5210
 AP_HW_AOCODA-RC-F405V3               5211
+
+# IDs 5220-5239 reserved for UAV-DEV GmbH
+AP_HW_UAV-DEV-HAT-H7                 5220
+AP_HW_UAV-DEV-NucPilot-H7            5221
+AP_HW_UAV-DEV-M10S-L4                5222
+AP_HW_UAV-DEV-F9P-G4                 5223
+AP_HW_UAV-DEV-UM982-G4               5224
+AP_HW_UAV-DEV-M20D-G4                5225
+AP_HW_UAV-DEV-Sensorboard-G4         5226
 
 #IDs 5301-5399 reserved for Sierra Aerospace
 AP_HW_Sierra-TrueNavPro-G4           5301
@@ -324,6 +344,13 @@ AP_HW_Holybro-UM982-G4               5402
 AP_HW_Holybro-UM960-H7               5403
 AP_HW_Holybro-PERIPH-H7              5404
 
+#IDs 5501-5599 reserved for MATEKSYS
+AP_HW_MATEKH743SE                    5501
+
+
+#IDs 5600-5699 reserved for ZeroOne
+AP_HW_ZeroOne_X6                     5600
+
 # IDs 6000-6099 reserved for SpektreWorks
 
 # IDs 6600-6699 reserved for Eagle Eye Drones
@@ -331,3 +358,6 @@ AP_HW_Holybro-PERIPH-H7              5404
 # OpenDroneID enabled boards. Use 10000 + the base board ID
 AP_HW_CubeOrange_ODID               10140
 AP_HW_Pixhawk6_ODID                 10053
+
+# do not allocate board IDs above 10,000 for non-ODID boards.
+# do not allocate board IDs above 19,999 in this file.

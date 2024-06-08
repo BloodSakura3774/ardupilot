@@ -465,6 +465,47 @@ class WaitAndMaintainLocation(WaitAndMaintain):
         return (f"Want=({self.target.lat},{self.target.lng}) distance={self.horizontal_error(current_value)}")
 
 
+class WaitAndMaintainEKFFlags(WaitAndMaintain):
+    '''Waits for EKF status flags to include required_flags and have
+    error_bits *not* set.'''
+    def __init__(self, test_suite, required_flags, error_bits, **kwargs):
+        super(WaitAndMaintainEKFFlags, self).__init__(test_suite, **kwargs)
+        self.required_flags = required_flags
+        self.error_bits = error_bits
+        self.last_EKF_STATUS_REPORT = None
+
+    def announce_start_text(self):
+        return f"Waiting for EKF value {self.required_flags}"
+
+    def get_current_value(self):
+        self.last_EKF_STATUS_REPORT = self.test_suite.assert_receive_message('EKF_STATUS_REPORT', timeout=10)
+        return self.last_EKF_STATUS_REPORT.flags
+
+    def validate_value(self, value):
+        if value & self.error_bits:
+            return False
+
+        if (value & self.required_flags) != self.required_flags:
+            return False
+
+        return True
+
+    def success_text(self):
+        return "EKF Flags OK"
+
+    def timeoutexception(self):
+        self.progress("Last EKF status report:")
+        self.progress(self.test_suite.dump_message_verbose(self.last_EKF_STATUS_REPORT))
+
+        return AutoTestTimeoutException(f"Failed to get EKF.flags={self.required_flags}")
+
+    def progress_text(self, current_value):
+        error_bits_str = ""
+        if current_value & self.error_bits:
+            error_bits_str = " (error bits present)"
+        return (f"Want=({self.required_flags}) got={current_value}{error_bits_str}")
+
+
 class WaitAndMaintainArmed(WaitAndMaintain):
     def get_current_value(self):
         return self.test_suite.armed()
@@ -1625,6 +1666,16 @@ class Result(object):
         return ret
 
 
+class ValgrindFailedResult(Result):
+    '''a custom Result to allow passing of Vaglrind failures around'''
+    def __init__(self):
+        super(ValgrindFailedResult, self).__init__(None)
+        self.passed = False
+
+    def __str__(self):
+        return "Valgrind error detected"
+
+
 class TestSuite(ABC):
     """Base abstract class.
     It implements the common function for all vehicle types.
@@ -2530,7 +2581,6 @@ class TestSuite(ABC):
             "SIM_RC_CHANCOUNT",
             "SIM_RICH_CTRL",
             "SIM_RICH_ENABLE",
-            "SIM_SERVO_SPEED",
             "SIM_SHIP_DSIZE",
             "SIM_SHIP_ENABLE",
             "SIM_SHIP_OFS_X",
@@ -2577,7 +2627,6 @@ class TestSuite(ABC):
             "SIM_WAVE_LENGTH",
             "SIM_WAVE_SPEED",
             "SIM_WIND_DIR_Z",
-            "SIM_WIND_T",
         ])
 
         vinfo_key = self.vehicleinfo_key()
@@ -3150,26 +3199,6 @@ class TestSuite(ABC):
         self.expect_list_remove(self.sitl)
         util.pexpect_close(self.sitl)
         self.sitl = None
-
-    def close(self):
-        """Tidy up after running all tests."""
-
-        if self.mav is not None:
-            self.mav.close()
-            self.mav = None
-        self.stop_SITL()
-
-        valgrind_log = util.valgrind_log_filepath(binary=self.binary,
-                                                  model=self.frame)
-        files = glob.glob("*" + valgrind_log)
-        for valgrind_log in files:
-            os.chmod(valgrind_log, 0o644)
-            if os.path.getsize(valgrind_log) > 0:
-                target = self.buildlogs_path("%s-%s" % (
-                    self.log_name(),
-                    os.path.basename(valgrind_log)))
-                self.progress("Valgrind log: moving %s to %s" % (valgrind_log, target))
-                shutil.move(valgrind_log, target)
 
     def start_test(self, description):
         self.progress("##################################################################################")
@@ -4185,6 +4214,7 @@ class TestSuite(ABC):
 
         tstart = self.get_sim_time_cached()
         pass_start = None
+        last_debug = 0
         while True:
             now = self.get_sim_time_cached()
             if now - tstart > timeout:
@@ -4200,8 +4230,14 @@ class TestSuite(ABC):
                     if pass_start is None:
                         pass_start = now
                         continue
-                    if now - pass_start < minimum_duration:
+                    delta = now - pass_start
+                    if now - last_debug >= 1:
+                        last_debug = now
+                        self.progress(f"Good field values ({delta:.2f}s/{minimum_duration}s)")
+                    if delta < minimum_duration:
                         continue
+                else:
+                    self.progress("Reached field values")
                 return m
             pass_start = None
 
@@ -7995,8 +8031,10 @@ Also, ignores heartbeats not from our target system'''
             if m.get_srcSystem() == self.sysid_thismav():
                 return m
 
-    def wait_ekf_happy(self, timeout=45, require_absolute=True):
+    def wait_ekf_happy(self, require_absolute=True, **kwargs):
         """Wait for EKF to be happy"""
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 45
 
         """ if using SITL estimates directly """
         if (int(self.get_parameter('AHRS_EKF_TYPE')) == 10):
@@ -8016,35 +8054,10 @@ Also, ignores heartbeats not from our target system'''
                                mavutil.mavlink.ESTIMATOR_POS_VERT_ABS |
                                mavutil.mavlink.ESTIMATOR_PRED_POS_HORIZ_ABS)
             error_bits |= mavutil.mavlink.ESTIMATOR_GPS_GLITCH
-        self.wait_ekf_flags(required_value, error_bits, timeout=timeout)
+        WaitAndMaintainEKFFlags(self, required_value, error_bits, **kwargs).run()
 
-    def wait_ekf_flags(self, required_value, error_bits, timeout=30):
-        self.progress("Waiting for EKF value %u" % required_value)
-        last_print_time = 0
-        tstart = self.get_sim_time()
-        m = None
-        while timeout is None or self.get_sim_time_cached() < tstart + timeout:
-            m = self.mav.recv_match(type='EKF_STATUS_REPORT', blocking=True, timeout=timeout)
-            if m is None:
-                continue
-            current = m.flags
-            errors = current & error_bits
-            everything_ok = (errors == 0 and
-                             current & required_value == required_value)
-            if everything_ok or self.get_sim_time_cached() - last_print_time > 1:
-                self.progress("Wait EKF.flags: required:%u current:%u errors=%u" %
-                              (required_value, current, errors))
-                last_print_time = self.get_sim_time_cached()
-            if everything_ok:
-                self.progress("EKF Flags OK")
-                return True
-        m_str = str(m)
-        if m is not None:
-            m_str = self.dump_message_verbose(m)
-        self.progress("Last EKF_STATUS_REPORT message:")
-        self.progress(m_str)
-        raise AutoTestTimeoutException("Failed to get EKF.flags=%u" %
-                                       required_value)
+    def wait_ekf_flags(self, required_value, error_bits, **kwargs):
+        WaitAndMaintainEKFFlags(self, required_value, error_bits, **kwargs).run()
 
     def wait_gps_disable(self, position_horizontal=True, position_vertical=False, timeout=30):
         """Disable GPS and wait for EKF to report the end of assistance from GPS."""
@@ -11809,7 +11822,28 @@ switch value'''
             self.rc_thread_should_quit = True
             self.rc_thread.join()
             self.rc_thread = None
-        self.close()
+
+        if self.mav is not None:
+            self.mav.close()
+            self.mav = None
+
+        self.stop_SITL()
+
+        valgrind_log = util.valgrind_log_filepath(binary=self.binary,
+                                                  model=self.frame)
+        files = glob.glob("*" + valgrind_log)
+        valgrind_failed = False
+        for valgrind_log in files:
+            os.chmod(valgrind_log, 0o644)
+            if os.path.getsize(valgrind_log) > 0:
+                target = self.buildlogs_path("%s-%s" % (
+                    self.log_name(),
+                    os.path.basename(valgrind_log)))
+                self.progress("Valgrind log: moving %s to %s" % (valgrind_log, target))
+                shutil.move(valgrind_log, target)
+                valgrind_failed = True
+        if valgrind_failed:
+            result_list.append(ValgrindFailedResult())
 
         return result_list
 
@@ -14208,6 +14242,8 @@ SERIAL5_BAUD 128
         sample_rate = 0
         counts = 0
         window = numpy.hanning(fft_len)
+        # The returned float array f contains the frequency bin centers in cycles per unit of the
+        # sample spacing (with zero at the start).
         freqmap = numpy.fft.rfftfreq(fft_len, 1.0 / messages[0].sample_rate_hz)
 
         # calculate NEBW constant

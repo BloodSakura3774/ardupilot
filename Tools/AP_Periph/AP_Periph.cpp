@@ -208,7 +208,7 @@ void AP_Periph_FW::init()
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_AIRSPEED
-#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
+#if (CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS) && (HAL_USE_I2C == TRUE)
     const bool pins_enabled = ChibiOS::I2CBus::check_select_pins(0x01);
     if (pins_enabled) {
         ChibiOS::I2CBus::set_bus_to_floating(0);
@@ -268,7 +268,7 @@ void AP_Periph_FW::init()
     for (uint8_t i = 0; i < ESC_NUMBERS; i++) {
         const uint8_t port = g.esc_serial_port[i];
         if (port < SERIALMANAGER_NUM_PORTS) { // skip bad ports
-            apd_esc_telem[i] = new ESC_APD_Telem (hal.serial(port), g.pole_count[i]);
+            apd_esc_telem[i] = NEW_NOTHROW ESC_APD_Telem (hal.serial(port), g.pole_count[i]);
         }
     }
 #endif
