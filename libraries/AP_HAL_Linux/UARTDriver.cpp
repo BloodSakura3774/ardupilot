@@ -23,7 +23,6 @@
 #include "TCPServerDevice.h"
 #include "UARTDevice.h"
 #include "UDPDevice.h"
-
 #include <GCS_MAVLink/GCS.h>
 #if HAL_GCS_ENABLED
 #include <AP_HAL/utility/packetise.h>
@@ -417,6 +416,7 @@ void UARTDriver::_timer_tick(void)
 }
 
 void UARTDriver::configure_parity(uint8_t v) {
+    UARTDriver::parity = v;
     _device->set_parity(v);
 }
 

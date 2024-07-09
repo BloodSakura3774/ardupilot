@@ -480,7 +480,8 @@ AP_BattMonitor::init()
         memset(&state[instance].cell_voltages, 0xFF, sizeof(cells));
         state[instance].instance = instance;
 
-        switch (get_type(instance)) {
+        const auto allocation_type = configured_type(instance);
+        switch (allocation_type) {
 #if AP_BATTERY_ANALOG_ENABLED
             case Type::ANALOG_VOLTAGE_ONLY:
             case Type::ANALOG_VOLTAGE_AND_CURRENT:
@@ -607,7 +608,9 @@ AP_BattMonitor::init()
             default:
                 break;
         }
-
+        if (drivers[instance] != nullptr) {
+            state[instance].type = allocation_type;
+        }
     // if the backend has some local parameters then make those available in the tree
     if (drivers[instance] && state[instance].var_info) {
         backend_var_info[instance] = state[instance].var_info;
@@ -698,14 +701,29 @@ void AP_BattMonitor::read()
     }
 #endif
 
+    const uint32_t now_ms = AP_HAL::millis();
     for (uint8_t i=0; i<_num_instances; i++) {
-        if (drivers[i] != nullptr && get_type(i) != Type::NONE) {
+            if (drivers[i] == nullptr) {
+                continue;
+            }
+            if (allocated_type(i) != configured_type(i)) {
+                continue;
+            }
+            // allow run-time disabling; this is technically redundant
+            if (configured_type(i) == Type::NONE) {
+                continue;
+            }
             drivers[i]->read();
             drivers[i]->update_resistance_estimate();
 
 #if AP_BATTERY_ESC_TELEM_OUTBOUND_ENABLED
             drivers[i]->update_esc_telem_outbound();
 #endif
+
+            // Update last heathy timestamp
+            if (state[i].healthy) {
+                state[i].last_healthy_ms = now_ms;
+            }
 
 #if HAL_LOGGING_ENABLED
             if (logger != nullptr && logger->should_log(_log_battery_bit)) {
@@ -714,7 +732,6 @@ void AP_BattMonitor::read()
                 drivers[i]->Log_Write_BCL(i, time_us);
             }
 #endif
-        }
     }
 
     check_failsafes();
@@ -841,6 +858,11 @@ void AP_BattMonitor::check_failsafes(void)
             switch (type) {
                 case Failsafe::None:
                     continue; // should not have been called in this case
+                case Failsafe::Unhealthy:
+                    // Report only for unhealthy, could add action param in the future
+                    action = 0;
+                    type_str = "missing, last:";
+                    break;
                 case Failsafe::Low:
                     action = _params[i]._failsafe_low_action;
                     type_str = "low";
@@ -1068,6 +1090,7 @@ MAV_BATTERY_CHARGE_STATE AP_BattMonitor::get_mavlink_charge_state(const uint8_t 
     switch (state[instance].failsafe) {
 
     case Failsafe::None:
+    case Failsafe::Unhealthy:
         if (get_mavlink_fault_bitmask(instance) != 0 || !healthy()) {
             return MAV_BATTERY_CHARGE_STATE_UNHEALTHY;
         }
@@ -1126,7 +1149,14 @@ void AP_BattMonitor::MPPT_set_powered_state(const uint8_t instance, const bool p
 bool AP_BattMonitor::healthy() const
 {
     for (uint8_t i=0; i< _num_instances; i++) {
-        if (get_type(i) != Type::NONE && !healthy(i)) {
+        if (allocated_type(i) != configured_type(i)) {
+            return false;
+        }
+        // allow run-time disabling; this is technically redundant
+        if (configured_type(i) == Type::NONE) {
+            continue;
+        }
+        if (!healthy(i)) {
             return false;
         }
     }

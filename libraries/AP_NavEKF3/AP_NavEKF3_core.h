@@ -60,6 +60,7 @@
 
 // mag fusion final reset altitude (using NED frame so altitude is negative)
 #define EKF3_MAG_FINAL_RESET_ALT 2.5f
+#define EKF3_MAG_FINAL_RESET_ALT_SUB 0.5f
 
 // learning rate for mag biases when using GPS yaw
 #define EK3_GPS_MAG_LEARN_RATE 0.005f
@@ -109,10 +110,12 @@
 #define WIND_VEL_VARIANCE_MIN 0.25f
 
 // maximum number of downward facing rangefinder instances available
+#if EK3_FEATURE_RANGEFINDER_MEASUREMENTS
 #if RANGEFINDER_MAX_INSTANCES > 1
 #define DOWNWARD_RANGEFINDER_MAX_INSTANCES 2
 #else
 #define DOWNWARD_RANGEFINDER_MAX_INSTANCES 1
+#endif
 #endif
 
 // number of continuous valid GPS velocity samples required to reset yaw
@@ -231,6 +234,9 @@ public:
     // The altitude element of the location is not used.
     // Returns true if the set was successful
     bool setLatLng(const Location &loc, float posAccuracy, uint32_t timestamp_ms);
+
+    // Popoluates the WMM data structure with the field at the given location
+    void setEarthFieldFromLocation(const Location &loc);
 
     // return estimated height above ground level
     // return false if ground height is not being estimated.
@@ -760,7 +766,7 @@ private:
     void correctDeltaVelocity(Vector3F &delVel, ftype delVelDT, uint8_t accel_index);
 
     // update IMU delta angle and delta velocity measurements
-    void readIMUData();
+    void readIMUData(bool startPredictEnabled);
 
     // update estimate of inactive bias states
     void learnInactiveBiases();
@@ -957,8 +963,8 @@ private:
     // zero attitude state covariances, but preserve variances
     void zeroAttCovOnly();
 
-    // record a yaw reset event
-    void recordYawReset();
+    // record all requested yaw resets completed
+    void recordYawResetsCompleted();
 
     // record a magnetic field state reset event
     void recordMagReset();
@@ -1037,6 +1043,8 @@ private:
     bool tasTimeout;                // boolean true if true airspeed measurements have failed for too long and have timed out
     bool dragTimeout;               // boolean true if drag measurements have failed for too long and have timed out
     bool badIMUdata;                // boolean true if the bad IMU data is detected
+    bool velAiding;                 // boolean true if the velocity drift is constrained by observations
+    bool waitingForGpsChecks;       // boolean true if the EKF should write GPS data to the buffer until quality checks have passed
     uint32_t badIMUdata_ms;         // time stamp bad IMU data was last detected
     uint32_t goodIMUdata_ms;        // time stamp good IMU data was last detected
     uint32_t vertVelVarClipCounter; // counter used to control reset of vertical velocity variance following collapse against the lower limit
@@ -1048,7 +1056,9 @@ private:
     EKF_obs_buffer_t<mag_elements> storedMag;      // Magnetometer data buffer
     EKF_obs_buffer_t<baro_elements> storedBaro;    // Baro data buffer
     EKF_obs_buffer_t<tas_elements> storedTAS;      // TAS data buffer
+#if EK3_FEATURE_RANGEFINDER_MEASUREMENTS
     EKF_obs_buffer_t<range_elements> storedRange;  // Range finder data buffer
+#endif
     EKF_IMU_buffer_t<output_elements> storedOutput;// output state buffer
     Matrix3F prevTnb;               // previous nav to body transformation used for INS earth rotation compensation
     ftype accNavMag;                // magnitude of navigation accel - used to adjust GPS obs variance (m/s^2)
@@ -1107,7 +1117,11 @@ private:
     ftype hgtTestRatio;             // sum of squares of baro height innovation divided by fail threshold
     Vector3F magTestRatio;          // sum of squares of magnetometer innovations divided by fail threshold
     ftype tasTestRatio;             // sum of squares of true airspeed innovation divided by fail threshold
-    bool inhibitWindStates;         // true when wind states and covariances are to remain constant
+    bool inhibitWindStates;         // true when wind states and covariances should not be used
+    ftype lastAirspeedEstimate;     // last true airspeed estimate (m/s)
+    bool lastAspdEstIsValid;        // true when the last true airspeed estimate is valid (m/s)
+    bool windStateIsObservable;     // true when wind states are observable from measurements.
+    bool treatWindStatesAsTruth;    // true when wind states should be used as a truth reference
     bool windStatesAligned;         // true when wind states have been aligned
     bool inhibitMagStates;          // true when magnetic field states are inactive
     bool lastInhibitMagStates;      // previous inhibitMagStates
@@ -1143,7 +1157,6 @@ private:
     range_elements rangeDataDelayed;// Range finder data at the fusion time horizon
     tas_elements tasDataNew;        // TAS data at the current time horizon
     tas_elements tasDataDelayed;    // TAS data at the fusion time horizon
-    bool usingDefaultAirspeed;      // true when a default airspeed is being used instead of a measured value
     mag_elements magDataDelayed;    // Magnetometer data at the fusion time horizon
     gps_elements gpsDataNew;        // GPS data at the current time horizon
     gps_elements gpsDataDelayed;    // GPS data at the fusion time horizon
@@ -1180,7 +1193,6 @@ private:
     uint8_t magSelectIndex;         // Index of the magnetometer that is being used by the EKF
     bool runUpdates;                // boolean true when the EKF updates can be run
     uint32_t framesSincePredict;    // number of frames lapsed since EKF instance did a state prediction
-    bool startPredictEnabled;       // boolean true when the frontend has given permission to start a new state prediciton cycle
     uint8_t localFilterTimeStep_ms; // average number of msec between filter updates
     ftype posDownObsNoise;          // observation noise variance on the vertical position used by the state and covariance update step (m^2)
     Vector3F delAngCorrected;       // corrected IMU delta angle vector at the EKF time horizon (rad)
@@ -1287,9 +1299,11 @@ private:
     ftype rngOnGnd;                         // Expected range finder reading in metres when vehicle is on ground
     uint32_t lastRngMeasTime_ms;            // Timestamp of last range measurement
     bool terrainHgtStable;                  // true when the terrain height is stable enough to be used as a height reference
+#if EK3_FEATURE_RANGEFINDER_MEASUREMENTS
     ftype storedRngMeas[DOWNWARD_RANGEFINDER_MAX_INSTANCES][3];              // Ringbuffer of stored range measurements for dual range sensors
     uint32_t storedRngMeasTime_ms[DOWNWARD_RANGEFINDER_MAX_INSTANCES][3];    // Ringbuffers of stored range measurement times for dual range sensors
     uint8_t rngMeasIndex[DOWNWARD_RANGEFINDER_MAX_INSTANCES];                // Current range measurement ringbuffer index for dual range sensors
+#endif
 
     // body frame odometry fusion
 #if EK3_FEATURE_BODY_ODOM

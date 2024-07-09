@@ -299,6 +299,7 @@ void UARTDriver::_begin(uint32_t b, uint16_t rxS, uint16_t txS)
         _rx_initialised = false;
         _readbuf.set_size_best(rxS);
     }
+    _rts_threshold = _readbuf.get_size() / 16U;
 
     bool clear_buffers = false;
     if (b != 0) {
@@ -667,6 +668,19 @@ uint32_t UARTDriver::get_usb_baud() const
 #if HAL_USE_SERIAL_USB
     if (sdef.is_usb) {
         return ::get_usb_baud(sdef.endpoint_id);
+    }
+#endif
+    return 0;
+}
+
+/*
+    get the requested usb parity.  Valid if get_usb_baud() returned non-zero.
+*/
+uint8_t UARTDriver::get_usb_parity() const
+{
+#if HAL_USE_SERIAL_USB
+    if (sdef.is_usb) {
+        return ::get_usb_parity(sdef.endpoint_id);
     }
 #endif
     return 0;
@@ -1401,10 +1415,10 @@ __RAMFUNC__ void UARTDriver::update_rts_line(void)
         return;
     }
     uint16_t space = _readbuf.space();
-    if (_rts_is_active && space < 16) {
+    if (_rts_is_active && space < _rts_threshold) {
         _rts_is_active = false;
         palSetLine(arts_line);
-    } else if (!_rts_is_active && space > 32) {
+    } else if (!_rts_is_active && space > _rts_threshold+16) {
         _rts_is_active = true;
         palClearLine(arts_line);
     }
@@ -1429,6 +1443,7 @@ void UARTDriver::configure_parity(uint8_t v)
         // not possible
         return;
     }
+    UARTDriver::parity = v;
 #if HAL_USE_SERIAL == TRUE
     // stop and start to take effect
     sdStop((SerialDriver*)sdef.serial);

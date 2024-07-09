@@ -131,10 +131,12 @@ bool NavEKF3_core::setup_core(uint8_t _imu_index, uint8_t _core_index)
     if(frontend->sources.gps_yaw_enabled() && !storedYawAng.init(obs_buffer_length)) {
         return false;
     }
+#if AP_RANGEFINDER_ENABLED
     // Note: the use of dual range finders potentially doubles the amount of data to be stored
     if(dal.rangefinder() && !storedRange.init(MIN(2*obs_buffer_length , imu_buffer_length))) {
         return false;
     }
+#endif
     // Note: range beacon data is read one beacon at a time and can arrive at a high rate
 #if EK3_FEATURE_BEACON_FUSION
     if(dal.beacon() && !rngBcn.storedRange.init(imu_buffer_length+1)) {
@@ -258,6 +260,8 @@ void NavEKF3_core::InitialiseVariables()
     PV_AidingModePrev = AID_NONE;
     posTimeout = true;
     velTimeout = true;
+    velAiding = false;
+    waitingForGpsChecks = false;
     memset(&faultStatus, 0, sizeof(faultStatus));
     hgtRate = 0.0f;
     onGround = true;
@@ -266,6 +270,9 @@ void NavEKF3_core::InitialiseVariables()
     prevInFlight = false;
     manoeuvring = false;
     inhibitWindStates = true;
+    windStateIsObservable = false;
+    treatWindStatesAsTruth = false;
+    lastAspdEstIsValid = false;
     windStatesAligned = false;
     inhibitDelVelBiasStates = true;
     inhibitDelAngBiasStates = true;
@@ -333,9 +340,11 @@ void NavEKF3_core::InitialiseVariables()
     memset(&filterStatus, 0, sizeof(filterStatus));
     activeHgtSource = AP_NavEKF_Source::SourceZ::BARO;
     prevHgtSource = activeHgtSource;
+#if EK3_FEATURE_RANGEFINDER_MEASUREMENTS
     memset(&rngMeasIndex, 0, sizeof(rngMeasIndex));
     memset(&storedRngMeasTime_ms, 0, sizeof(storedRngMeasTime_ms));
     memset(&storedRngMeas, 0, sizeof(storedRngMeas));
+#endif
     terrainHgtStable = true;
     ekfOriginHgtVar = 0.0f;
     ekfGpsRefHgt = 0.0;
@@ -385,7 +394,9 @@ void NavEKF3_core::InitialiseVariables()
     storedGPS.reset();
     storedBaro.reset();
     storedTAS.reset();
+#if EK3_FEATURE_RANGEFINDER_MEASUREMENTS
     storedRange.reset();
+#endif
     storedOutput.reset();
 #if EK3_FEATURE_BEACON_FUSION
     rngBcn.storedRange.reset();
@@ -466,7 +477,7 @@ bool NavEKF3_core::InitialiseFilterBootstrap(void)
     }
 
     // read all the sensors required to start the EKF the states
-    readIMUData();
+    readIMUData(false);  // don't allow prediction
     readMagData();
     readGpsData();
     readGpsYawData();
@@ -608,9 +619,6 @@ void NavEKF3_core::CovarianceInit()
 // Update Filter States - this should be called whenever new IMU data is available
 void NavEKF3_core::UpdateFilter(bool predict)
 {
-    // Set the flag to indicate to the filter that the front-end has given permission for a new state prediction cycle to be started
-    startPredictEnabled = predict;
-
     // don't run filter updates if states have not been initialised
     if (!statesInitialised) {
         return;
@@ -627,7 +635,7 @@ void NavEKF3_core::UpdateFilter(bool predict)
     controlFilterModes();
 
     // read IMU data as delta angles and velocities
-    readIMUData();
+    readIMUData(predict);
 
     // Run the EKF equations to estimate at the fusion time horizon if new IMU data is available in the buffer
     if (runUpdates) {
@@ -1080,10 +1088,18 @@ void NavEKF3_core::CovariancePrediction(Vector3F *rotVarVecPtr)
 
     if (!inhibitWindStates) {
         const bool isDragFusionDeadReckoning = filterStatus.flags.dead_reckoning && !dragTimeout;
-        if (isDragFusionDeadReckoning) {
-            // when dead reckoning using drag fusion stop learning wind states to provide a more stable velocity estimate
+        const bool newTreatWindStatesAsTruth = isDragFusionDeadReckoning || !windStateIsObservable;
+        if (newTreatWindStatesAsTruth) {
+            treatWindStatesAsTruth = true;
             P[23][23] = P[22][22] = 0.0f;
         } else {
+            if (treatWindStatesAsTruth) {
+                treatWindStatesAsTruth = false;
+                if (windStateIsObservable) {
+                    // allow EKF to relearn wind states rapidly
+                    P[23][23] = P[22][22] = sq(WIND_VEL_VARIANCE_MAX);
+                }
+            }
 	        ftype windVelVar  = sq(dt * constrain_ftype(frontend->_windVelProcessNoise, 0.0f, 1.0f) * (1.0f + constrain_ftype(frontend->_wndVarHgtRateScale, 0.0f, 1.0f) * fabsF(hgtRate)));
 	        if (!tasDataDelayed.allowFusion) {
 	            // Allow wind states to recover faster when using sideslip fusion with a failed airspeed sesnor
@@ -1941,7 +1957,11 @@ void NavEKF3_core::ConstrainVariances()
     }
 
     if (!inhibitWindStates) {
-        for (uint8_t i=22; i<=23; i++) P[i][i] = constrain_ftype(P[i][i],0.0f,WIND_VEL_VARIANCE_MAX);
+        if (treatWindStatesAsTruth) {
+            P[23][23] = P[22][22] = 0.0f;
+        } else {
+            for (uint8_t i=22; i<=23; i++) P[i][i] = constrain_ftype(P[i][i],0.0f,WIND_VEL_VARIANCE_MAX);
+        }
     } else {
         zeroCols(P,22,23);
         zeroRows(P,22,23);

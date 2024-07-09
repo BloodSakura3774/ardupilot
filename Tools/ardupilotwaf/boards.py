@@ -187,7 +187,7 @@ class Board:
         cfg.env.prepend_value('INCLUDES', [
             cfg.srcnode.find_dir('libraries/AP_Common/missing').abspath()
         ])
-        if os.path.exists(os.path.join(env.SRCROOT, '.vscode/c_cpp_properties.json')):
+        if os.path.exists(os.path.join(env.SRCROOT, '.vscode/c_cpp_properties.json')) and 'AP_NO_COMPILE_COMMANDS' not in os.environ:
             # change c_cpp_properties.json configure the VSCode Intellisense env
             c_cpp_properties = json.load(open(os.path.join(env.SRCROOT, '.vscode/c_cpp_properties.json')))
             for config in c_cpp_properties['configurations']:
@@ -286,7 +286,7 @@ class Board:
 
         if cfg.env.DEBUG:
             env.CFLAGS += [
-                '-g',
+                '-g3',
                 '-O0',
             ]
             env.DEFINES.update(
@@ -294,7 +294,7 @@ class Board:
             )
         elif cfg.options.debug_symbols:
             env.CFLAGS += [
-                '-g',
+                '-g3',
             ]
         if cfg.env.COVERAGE:
             env.CFLAGS += [
@@ -753,8 +753,10 @@ class sitl(Board):
         ]
 
         # wrap malloc to ensure memory is zeroed
-        # don't do this on MacOS as ld doesn't support --wrap
-        if platform.system() != 'Darwin':
+        if cfg.env.DEST_OS == 'cygwin':
+            # on cygwin we need to wrap _malloc_r instead
+            env.LINKFLAGS += ['-Wl,--wrap,_malloc_r']
+        elif platform.system() != 'Darwin':
             env.LINKFLAGS += ['-Wl,--wrap,malloc']
         
         if cfg.options.enable_sfml:
@@ -944,6 +946,19 @@ class sitl_periph_gps(sitl_periph):
             HAL_PERIPH_ENABLE_GPS = 1,
         )
 
+class sitl_periph_battmon(sitl_periph):
+    def configure_env(self, cfg, env):
+        cfg.env.AP_PERIPH = 1
+        super(sitl_periph_battmon, self).configure_env(cfg, env)
+        env.DEFINES.update(
+            HAL_BUILD_AP_PERIPH = 1,
+            PERIPH_FW = 1,
+            CAN_APP_NODE_NAME = '"org.ardupilot.ap_periph_battmon"',
+            APJ_BOARD_ID = 101,
+
+            HAL_PERIPH_ENABLE_BATTERY = 1,
+        )
+
 class esp32(Board):
     abstract = True
     toolchain = 'xtensa-esp32-elf'
@@ -1006,8 +1021,7 @@ class esp32(Board):
                          '-fno-inline-functions',
                          '-mlongcalls',
                          '-fsingle-precision-constant', # force const vals to be float , not double. so 100.0 means 100.0f 
-                         '-fno-threadsafe-statics',
-                         '-DCYGWIN_BUILD']
+                         '-fno-threadsafe-statics']
         env.CXXFLAGS.remove('-Werror=undef')
         env.CXXFLAGS.remove('-Werror=shadow')
 
