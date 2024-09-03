@@ -474,13 +474,13 @@ bool Copter::update_target_location(const Location &old_loc, const Location &new
 
 #endif // AP_SCRIPTING_ENABLED
 
-// returns true if vehicle is landing. Only used by Lua scripts
+// returns true if vehicle is landing.
 bool Copter::is_landing() const
 {
     return flightmode->is_landing();
 }
 
-// returns true if vehicle is taking off. Only used by Lua scripts
+// returns true if vehicle is taking off.
 bool Copter::is_taking_off() const
 {
     return flightmode->is_taking_off();
@@ -578,14 +578,17 @@ void Copter::ten_hz_logging_loop()
     if (!should_log(MASK_LOG_ATTITUDE_FAST)) {
         Log_Write_EKF_POS();
     }
-    if (should_log(MASK_LOG_MOTBATT)) {
+    if ((FRAME_CONFIG == HELI_FRAME) || should_log(MASK_LOG_MOTBATT)) {
+        // always write motors log if we are a heli
         motors->Log_Write();
     }
     if (should_log(MASK_LOG_RCIN)) {
         logger.Write_RCIN();
+#if AP_RSSI_ENABLED
         if (rssi.enabled()) {
             logger.Write_RSSI();
         }
+#endif
     }
     if (should_log(MASK_LOG_RCOUT)) {
         logger.Write_RCOUT();
@@ -605,9 +608,6 @@ void Copter::ten_hz_logging_loop()
         g2.beacon.log();
 #endif
     }
-#if FRAME_CONFIG == HELI_FRAME
-    Log_Write_Heli();
-#endif
 #if AP_WINCH_ENABLED
     if (should_log(MASK_LOG_ANY)) {
         g2.winch.write_log();
@@ -657,7 +657,7 @@ void Copter::three_hz_loop()
     // check for deadreckoning failsafe
     failsafe_deadreckon_check();
 
-    // update ch6 in flight tuning
+    //update transmitter based in flight tuning
     tuning();
 
     // check if avoidance should be enabled based on alt

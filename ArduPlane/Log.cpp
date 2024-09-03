@@ -121,7 +121,7 @@ void Plane::Log_Write_Control_Tuning()
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
 
-#if OFFBOARD_GUIDED == ENABLED
+#if AP_PLANE_OFFBOARD_GUIDED_SLEW_ENABLED
 struct PACKED log_OFG_Guided {
     LOG_PACKET_HEADER;
     uint64_t time_us;
@@ -255,15 +255,17 @@ void Plane::Log_Write_RC(void)
 {
     logger.Write_RCIN();
     logger.Write_RCOUT();
+#if AP_RSSI_ENABLED
     if (rssi.enabled()) {
         logger.Write_RSSI();
     }
+#endif
     Log_Write_AETR();
 }
 
 void Plane::Log_Write_Guided(void)
 {
-#if OFFBOARD_GUIDED == ENABLED
+#if AP_PLANE_OFFBOARD_GUIDED_SLEW_ENABLED
     if (control_mode != &mode_guided) {
         return;
     }
@@ -275,7 +277,7 @@ void Plane::Log_Write_Guided(void)
     if ( is_positive(guided_state.target_alt) || is_positive(guided_state.target_airspeed_cm) ) {
         Log_Write_OFG_Guided();
     }
-#endif // OFFBOARD_GUIDED == ENABLED
+#endif // AP_PLANE_OFFBOARD_GUIDED_SLEW_ENABLED
 }
 
 // incoming-to-vehicle mavlink COMMAND_INT can be logged
@@ -431,7 +433,7 @@ const struct LogStructure Plane::log_structure[] = {
 // @LoggerMessage: TSIT
 // @Description: tailsitter speed scailing values
 // @Field: TimeUS: Time since system startup
-// @Field: Ts: throttle scailing used for tilt motors
+// @Field: Ts: throttle scaling used for tilt motors
 // @Field: Ss: speed scailing used for control surfaces method from Q_TAILSIT_GSCMSK
 // @Field: Tmin: minimum output throttle caculated from disk thoery gain scale with Q_TAILSIT_MIN_VO
 #if HAL_QUADPLANE_ENABLED
@@ -481,7 +483,7 @@ const struct LogStructure Plane::log_structure[] = {
     { LOG_AETR_MSG, sizeof(log_AETR),
       "AETR", "Qfffffff",  "TimeUS,Ail,Elev,Thr,Rudd,Flap,Steer,SS", "s-------", "F-------" , true },
 
-#if OFFBOARD_GUIDED == ENABLED
+#if AP_PLANE_OFFBOARD_GUIDED_SLEW_ENABLED
 // @LoggerMessage: OFG
 // @Description: OFfboard-Guided - an advanced version of GUIDED for companion computers that includes rate/s.  
 // @Field: TimeUS: Time since system startup

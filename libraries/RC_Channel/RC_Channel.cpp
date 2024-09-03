@@ -239,6 +239,8 @@ const AP_Param::GroupInfo RC_Channel::var_info[] = {
     // @Values{Plane}: 176:Quadplane Fwd Throttle Override enable
     // @Values{Copter, Rover, Plane, Blimp}: 177:Mount LRF enable
     // @Values{Copter}: 178:FlightMode Pause/Resume
+    // @Values{Plane}: 179:ICEngine start / stop
+    // @Values{Copter, Plane}: 180:Test autotuned gains after tune is complete
     // @Values{Rover}: 201:Roll
     // @Values{Rover}: 202:Pitch
     // @Values{Rover}: 207:MainSail
@@ -247,6 +249,7 @@ const AP_Param::GroupInfo RC_Channel::var_info[] = {
     // @Values{Plane}: 210:Airbrakes
     // @Values{Rover}: 211:Walking Height
     // @Values{Copter, Rover, Plane}: 212:Mount1 Roll, 213:Mount1 Pitch, 214:Mount1 Yaw, 215:Mount2 Roll, 216:Mount2 Pitch, 217:Mount2 Yaw
+    // @Values{Copter}: 219:Transmitter Tuning
     // @Values{Copter, Rover, Plane}: 300:Scripting1, 301:Scripting2, 302:Scripting3, 303:Scripting4, 304:Scripting5, 305:Scripting6, 306:Scripting7, 307:Scripting8
     // @User: Standard
     AP_GROUPINFO_FRAME("OPTION",  6, RC_Channel, option, 0, AP_PARAM_FRAME_COPTER|AP_PARAM_FRAME_ROVER|AP_PARAM_FRAME_PLANE|AP_PARAM_FRAME_BLIMP),
@@ -1139,7 +1142,7 @@ void RC_Channel::do_aux_function_fence(const AuxSwitchPos ch_flag)
         return;
     }
 
-    fence->enable(ch_flag == AuxSwitchPos::HIGH);
+    fence->enable_configured(ch_flag == AuxSwitchPos::HIGH);
 }
 #endif
 
@@ -1858,7 +1861,7 @@ RC_Channel *RC_Channels::find_channel_for_option(const RC_Channel::AUX_FUNC opti
 // duplicate_options_exist - returns true if any options are duplicated
 bool RC_Channels::duplicate_options_exist()
 {
-    uint8_t auxsw_option_counts[512] = {};
+    Bitmask<(uint16_t)RC_Channel::AUX_FUNC::AUX_FUNCTION_MAX> used_auxsw_options;
     for (uint8_t i=0; i<NUM_RC_CHANNELS; i++) {
         const RC_Channel *c = channel(i);
         if (c == nullptr) {
@@ -1866,19 +1869,16 @@ bool RC_Channels::duplicate_options_exist()
             continue;
         }
         const uint16_t option = c->option.get();
-        if (option >= sizeof(auxsw_option_counts)) {
+        if (option == (uint16_t)RC_Channel::AUX_FUNC::DO_NOTHING) {
             continue;
         }
-        auxsw_option_counts[option]++;
-    }
-
-    for (uint16_t i=0; i<sizeof(auxsw_option_counts); i++) {
-        if (i == 0) { // MAGIC VALUE! This is AUXSW_DO_NOTHING
+        if (option >= used_auxsw_options.size()) {
             continue;
         }
-        if (auxsw_option_counts[i] > 1) {
+        if (used_auxsw_options.get(option)) {
             return true;
         }
+        used_auxsw_options.set(option);
     }
     return false;
 }

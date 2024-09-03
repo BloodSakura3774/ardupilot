@@ -31,7 +31,7 @@
 
   All entries in this table must be ordered by priority.
 
-  This table is interleaved with the table presnet in each of the
+  This table is interleaved with the table present in each of the
   vehicles to determine the order in which tasks are run.  Convenience
   methods SCHED_TASK and SCHED_TASK_CLASS are provided to build
   entries in this structure:
@@ -559,7 +559,7 @@ void Plane::update_alt()
 
     // low pass the sink rate to take some of the noise out
     auto_state.sink_rate = 0.8f * auto_state.sink_rate + 0.2f*sink_rate;
-#if PARACHUTE == ENABLED
+#if HAL_PARACHUTE_ENABLED
     parachute.set_sink_rate(auto_state.sink_rate);
 #endif
 
@@ -908,6 +908,16 @@ bool Plane::set_land_descent_rate(float descent_rate)
 #endif
     return false;
 }
+
+// Allow for scripting to have control over the crosstracking when exiting and resuming missions or guided flight
+// It's up to the Lua script to ensure the provided location makes sense
+bool Plane::set_crosstrack_start(const Location &new_start_location)
+{        
+    prev_WP_loc = new_start_location;
+    auto_state.crosstrack = true;
+    return true;
+}
+
 #endif // AP_SCRIPTING_ENABLED
 
 // returns true if vehicle is landing.

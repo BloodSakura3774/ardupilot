@@ -139,7 +139,7 @@ static uint32_t get_random_range(uint16_t range)
 static void handle_get_node_info(CanardInstance* ins,
                                  CanardRxTransfer* transfer)
 {
-    uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
     uavcan_protocol_GetNodeInfoResponse pkt {};
 
     node_status.uptime_sec = AP_HAL::millis() / 1000U;
@@ -747,7 +747,7 @@ bool can_check_update(void)
     bool ret = false;
 #if HAL_RAM_RESERVE_START >= 256
     struct app_bootloader_comms *comms = (struct app_bootloader_comms *)HAL_RAM0_START;
-    if (comms->magic == APP_BOOTLOADER_COMMS_MAGIC) {
+    if (comms->magic == APP_BOOTLOADER_COMMS_MAGIC && comms->my_node_id != 0) {
         can_set_node_id(comms->my_node_id);
         fw_update.node_id = comms->server_node_id;
         for (uint8_t i=0; i<FW_UPDATE_PIPELINE_LEN; i++) {
@@ -868,7 +868,7 @@ void can_printf(const char *fmt, ...)
     // only on H7 for now, where we have plenty of flash
 #if defined(STM32H7)
     uavcan_protocol_debug_LogMessage pkt {};
-    uint8_t buffer[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE];
     va_list ap;
     va_start(ap, fmt);
     uint32_t n = vsnprintf((char*)pkt.text.data, sizeof(pkt.text.data), fmt, ap);

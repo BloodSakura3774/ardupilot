@@ -135,7 +135,7 @@ i2c = {}
 ---@param address integer -- device address 0 to 128
 ---@param clock? uint32_t_ud|integer|number -- optional bus clock, default 400000
 ---@param smbus? boolean -- optional sumbus flag, default false
----@return AP_HAL__I2CDevice_ud|nil
+---@return AP_HAL__I2CDevice_ud
 function i2c:get_device(bus, address, clock, smbus) end
 
 -- EFI state structure
@@ -391,6 +391,10 @@ efi = {}
 -- desc
 ---@return EFI_State_ud
 function efi:get_state() end
+
+-- get last update time in milliseconds
+---@return uint32_t_ud
+function efi:get_last_update_ms() end
 
 -- desc
 ---@param instance integer
@@ -1211,6 +1215,13 @@ local AP_HAL__I2CDevice_ud = {}
 ---@param address integer
 function AP_HAL__I2CDevice_ud:set_address(address) end
 
+-- Performs an I2C transfer, sending data_str bytes (see string.pack) and
+-- returning a string of any requested read bytes (see string.unpack)
+---@param data_str string
+---@param read_length integer
+---@return string|nil
+function AP_HAL__I2CDevice_ud:transfer(data_str, read_length) end
+
 -- If no read length is provided a single register will be read and returned.
 -- If read length is provided a table of register values are returned.
 ---@param register_num integer
@@ -1397,6 +1408,16 @@ function AP_Camera__camera_state_t_ud:take_pic_incr() end
 ---@param instance integer
 ---@return AP_Camera__camera_state_t_ud|nil
 function camera:get_state(instance) end
+
+-- Change a camera setting to a given value
+---@param instance integer
+---@param setting integer
+---| '0' # THERMAL_PALETTE
+---| '1' # THERMAL_GAIN
+---| '2' # THERMAL_RAW_DATA
+---@param value number
+---@return boolean
+function camera:change_setting(instance, setting, value) end
 
 -- desc
 mount = {}
@@ -2066,6 +2087,11 @@ function esc_telem:update_rpm(esc_index, rpm, error_rate) end
 ---@param scale_factor number -- factor
 function esc_telem:set_rpm_scale(esc_index, scale_factor) end
 
+-- get the timestamp of last telemetry data for an ESC
+---@param esc_index integer
+---@return uint32_t_ud
+function esc_telem:get_last_telem_data_ms(esc_index) end
+
 -- desc
 optical_flow = {}
 
@@ -2107,6 +2133,11 @@ function baro:get_altitude() end
 ---@return boolean
 function baro:healthy(instance) end
 
+-- get altitude difference from a base pressure and current pressure
+---@param base_pressure number -- first reference pressure in Pa
+---@param pressure number -- 2nd pressure in Pa
+---@return number -- altitude difference in meters
+function baro:get_altitude_difference(base_pressure,pressure) end
 
 -- Serial ports
 serial = {}
@@ -2485,6 +2516,12 @@ function vehicle:is_taking_off() end
 ---@return boolean
 function vehicle:is_landing() end
 
+-- Set the previous target location for crosstrack and crosstrack if available in the current mode
+-- It's up to the Lua code to ensure the new_start_location makes sense
+---@param new_start_location Location_ud
+---@return boolean -- true on success
+function vehicle:set_crosstrack_start(new_start_location) end
+
 -- desc
 onvif = {}
 
@@ -2608,7 +2645,7 @@ function gcs:last_seen() end
 -- call a MAVLink MAV_CMD_xxx command via command_int interface
 ---@param command integer -- MAV_CMD_xxx
 ---@param params table -- parameters of p1, p2, p3, p4, x, y and z and frame. Any not specified taken as zero
----@return boolean
+---@return integer -- MAV_RESULT
 function gcs:run_command_int(command, params) end
 
 -- The relay library provides access to controlling relay outputs.
@@ -3147,6 +3184,11 @@ function battery:current_amps(instance) end
 ---@return number -- resting voltage
 function battery:voltage_resting_estimate(instance) end
 
+-- Returns the estimated internal battery resistance in Ohms
+---@param instance integer -- battery instance
+---@return number -- estimated internal resistance in Ohms
+function battery:get_resistance(instance) end
+
 -- Returns the voltage of the selected battery instance.
 ---@param instance integer -- battery instance
 ---@return number -- voltage
@@ -3187,6 +3229,10 @@ function arming:get_aux_auth_id() end
 -- Attempts to arm the vehicle. Returns true if successful.
 ---@return boolean -- true if armed successfully
 function arming:arm() end
+
+-- force arm the vehicle
+---@return boolean -- true if armed
+function arming:arm_force() end
 
 -- Returns a true if vehicle is currently armed.
 ---@return boolean -- true if armed

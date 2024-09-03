@@ -24,7 +24,6 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_HAL/Scheduler.h>
 #include <AP_HAL/Semaphores.h>
-#include <AP_AHRS/AP_AHRS.h>
 
 #include "fcntl.h"
 
@@ -212,6 +211,9 @@ public:
 
     //! @brief Parameter storage
     static const struct AP_Param::GroupInfo var_info[];
+
+    //! @brief ROS_DOMAIN_ID
+    AP_Int32 domain_id;
 
     //! @brief Enum used to mark a topic as a data reader or writer
     enum class Topic_rw : uint8_t {

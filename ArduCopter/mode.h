@@ -128,6 +128,7 @@ public:
     virtual bool allows_save_trim() const { return false; }
     virtual bool allows_autotune() const { return false; }
     virtual bool allows_flip() const { return false; }
+    virtual bool crash_check_enabled() const { return true; }
 
 #if FRAME_CONFIG == HELI_FRAME
     virtual bool allows_inverted() const { return false; };
@@ -420,6 +421,7 @@ public:
     void air_mode_aux_changed();
     bool allows_save_trim() const override { return true; }
     bool allows_flip() const override { return true; }
+    bool crash_check_enabled() const override { return false; }
 
 protected:
 
@@ -596,12 +598,13 @@ protected:
 
 private:
 
-    enum class Options : int32_t {
+    enum class Option : int32_t {
         AllowArming                        = (1 << 0U),
         AllowTakeOffWithoutRaisingThrottle = (1 << 1U),
         IgnorePilotYaw                     = (1 << 2U),
         AllowWeatherVaning                 = (1 << 7U),
     };
+    bool option_is_enabled(Option option) const;
 
     // Enter auto rtl pseudo mode
     bool enter_auto_rtl(ModeReason reason);
@@ -650,7 +653,7 @@ private:
     void do_set_home(const AP_Mission::Mission_Command& cmd);
     void do_roi(const AP_Mission::Mission_Command& cmd);
     void do_mount_control(const AP_Mission::Mission_Command& cmd);
-#if PARACHUTE == ENABLED
+#if HAL_PARACHUTE_ENABLED
     void do_parachute(const AP_Mission::Mission_Command& cmd);
 #endif
 #if AP_WINCH_ENABLED
@@ -793,18 +796,12 @@ public:
     bool allows_arming(AP_Arming::Method method) const override { return false; }
     bool is_autopilot() const override { return false; }
 
-    void save_tuning_gains();
-    void reset();
+    AutoTune autotune;
 
 protected:
 
     const char *name() const override { return "AUTOTUNE"; }
     const char *name4() const override { return "ATUN"; }
-
-private:
-
-    AutoTune autotune;
-
 };
 #endif
 
@@ -910,6 +907,7 @@ public:
     bool has_manual_throttle() const override { return false; }
     bool allows_arming(AP_Arming::Method method) const override { return false; };
     bool is_autopilot() const override { return false; }
+    bool crash_check_enabled() const override { return false; }
 
 protected:
 
@@ -980,7 +978,7 @@ private:
     // calculate attitude from flow data
     void flow_to_angle(Vector2f &bf_angle);
 
-    LowPassFilterVector2f flow_filter;
+    LowPassFilterConstDtVector2f flow_filter;
 
     bool flowhold_init(bool ignore_checks);
     void flowhold_run();
@@ -1540,6 +1538,10 @@ private:
     // point while following our path home.  If we take too long we
     // may choose to land the vehicle.
     uint32_t path_follow_last_pop_fail_ms;
+
+    // backup last popped point so that it can be restored to the path
+    // if vehicle exits SmartRTL mode before reaching home. invalid if zero
+    Vector3f dest_NED_backup;
 };
 
 

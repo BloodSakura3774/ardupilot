@@ -119,7 +119,7 @@ public:
         ACRO_TRAINER =        14, // low = disabled, middle = leveled, high = leveled and limited
         SPRAYER =             15, // enable/disable the crop sprayer
         AUTO =                16, // change to auto flight mode
-        AUTOTUNE =            17, // auto tune
+        AUTOTUNE_MODE =       17, // auto tune
         LAND =                18, // change to LAND flight mode
         GRIPPER =             19, // Operate cargo grippers low=off, middle=neutral, high=on
         PARACHUTE_ENABLE  =   21, // Parachute enable/disable
@@ -252,6 +252,8 @@ public:
         VFWD_THR_OVERRIDE =  176, // force enabled VTOL forward throttle method
         MOUNT_LRF_ENABLE =   177,  // mount LRF enable/disable
         FLIGHTMODE_PAUSE =   178,  // e.g. pause movement towards waypoint
+        ICE_START_STOP =     179, // AP_ICEngine start stop
+        AUTOTUNE_TEST_GAINS = 180, // auto tune tuning switch to test or revert gains
 
 
         // inputs from 200 will eventually used to replace RCMAP
@@ -271,6 +273,7 @@ public:
         MOUNT2_PITCH =       216, // mount3 pitch input
         MOUNT2_YAW =         217, // mount4 yaw input
         LOWEHEISER_THROTTLE= 218,  // allows for throttle on slider
+        TRANSMITTER_TUNING = 219, // use a transmitter knob or slider for in-flight tuning
 
         // inputs 248-249 are reserved for the Skybrush fork at
         // https://github.com/skybrush-io/ardupilot

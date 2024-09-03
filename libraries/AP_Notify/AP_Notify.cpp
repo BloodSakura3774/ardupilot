@@ -20,6 +20,7 @@
 #include "Buzzer.h"
 #include "Display.h"
 #include "ExternalLED.h"
+#include "GPIO_LED_1.h"
 #include "IS31FL3195.h"
 #include "PCA9685LED_I2C.h"
 #include "NavigatorLED.h"
@@ -88,17 +89,10 @@ AP_Notify *AP_Notify::_singleton;
 #endif
 
 #ifndef DEFAULT_NTF_LED_TYPES
-#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
-  #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS)
-
-// Linux boards
-#elif CONFIG_HAL_BOARD == HAL_BOARD_LINUX
+#if CONFIG_HAL_BOARD == HAL_BOARD_LINUX
   #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIO
     #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS |\
                                     Notify_LED_PCA9685LED_I2C_External)
-
-  #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIO2
-    #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS)
 
   #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_EDGE
     #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS |\
@@ -116,17 +110,12 @@ AP_Notify *AP_Notify::_singleton;
 
   #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_RST_ZYNQ
     #define DEFAULT_NTF_LED_TYPES (Notify_LED_ToshibaLED_I2C_External)
+  #endif  // board subtype
+#endif  // CONFIG_HAL_BOARD == HAL_BOARD_LINUX
+#endif  // defined (DEFAULT_NTF_LED_TYPES)
 
-  #else // other linux
+#ifndef DEFAULT_NTF_LED_TYPES
     #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS)
-  #endif
-
-// All other builds
-#else
-    #define DEFAULT_NTF_LED_TYPES (Notify_LED_Board | I2C_LEDS)
-
-#endif // board selection
-
 #endif // DEFAULT_NTF_LED_TYPES
 
 #ifndef BUZZER_ENABLE_DEFAULT
@@ -311,6 +300,9 @@ void AP_Notify::add_backends(void)
                 ADD_BACKEND(NEW_NOTHROW AP_BoardLED());
 #elif AP_NOTIFY_GPIO_LED_2_ENABLED
                 ADD_BACKEND(NEW_NOTHROW AP_BoardLED2());
+#endif
+#if AP_NOTIFY_GPIO_LED_1_ENABLED
+                ADD_BACKEND(NEW_NOTHROW GPIO_LED_1());
 #endif
                 break;
 #if AP_NOTIFY_TOSHIBALED_ENABLED

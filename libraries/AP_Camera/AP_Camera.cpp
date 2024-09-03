@@ -6,7 +6,6 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_HAL/AP_HAL.h>
 #include <SRV_Channel/SRV_Channel.h>
-#include <AP_GPS/AP_GPS.h>
 #include "AP_Camera_Backend.h"
 #include "AP_Camera_Servo.h"
 #include "AP_Camera_Relay.h"
@@ -781,6 +780,19 @@ bool AP_Camera::get_state(uint8_t instance, camera_state_t& cam_state)
     }
     return backend->get_state(cam_state);
 }
+
+// change camera settings not normally used by autopilot
+bool AP_Camera::change_setting(uint8_t instance, CameraSetting setting, float value)
+{
+    WITH_SEMAPHORE(_rsem);
+
+    auto *backend = get_instance(instance);
+    if (backend == nullptr) {
+        return false;
+    }
+    return backend->change_setting(setting, value);
+}
+
 #endif // #if AP_CAMERA_SCRIPTING_ENABLED
 
 // return backend for instance number

@@ -185,7 +185,7 @@ static void readUniqueID(uint8_t* out_uid)
 void AP_Periph_FW::handle_get_node_info(CanardInstance* canard_instance,
                                         CanardRxTransfer* transfer)
 {
-    uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
     uavcan_protocol_GetNodeInfoResponse pkt {};
 
     node_status.uptime_sec = AP_HAL::millis() / 1000U;
@@ -324,7 +324,7 @@ void AP_Periph_FW::handle_param_getset(CanardInstance* canard_instance, CanardRx
         pkt.name.len = strnlen((char *)pkt.name.data, sizeof(pkt.name.data));
     }
 
-    uint8_t buffer[UAVCAN_PROTOCOL_PARAM_GETSET_RESPONSE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_PARAM_GETSET_RESPONSE_MAX_SIZE];
     uint16_t total_size = uavcan_protocol_param_GetSetResponse_encode(&pkt, buffer, !canfdout());
 
     canard_respond(canard_instance,
@@ -373,7 +373,7 @@ void AP_Periph_FW::handle_param_executeopcode(CanardInstance* canard_instance, C
 
     pkt.ok = true;
 
-    uint8_t buffer[UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_RESPONSE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_RESPONSE_MAX_SIZE];
     uint16_t total_size = uavcan_protocol_param_ExecuteOpcodeResponse_encode(&pkt, buffer, !canfdout());
 
     canard_respond(canard_instance,
@@ -406,7 +406,7 @@ void AP_Periph_FW::handle_begin_firmware_update(CanardInstance* canard_instance,
     memcpy(comms->path, req.image_file_remote_path.path.data, req.image_file_remote_path.path.len);
     comms->my_node_id = canardGetLocalNodeID(canard_instance);
 
-    uint8_t buffer[UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_MAX_SIZE];
     uavcan_protocol_file_BeginFirmwareUpdateResponse reply {};
     reply.error = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_ERROR_OK;
 
@@ -753,7 +753,7 @@ void AP_Periph_FW::can_safety_button_update(void)
     pkt.button = ARDUPILOT_INDICATION_BUTTON_BUTTON_SAFETY;
     pkt.press_time = counter;
 
-    uint8_t buffer[ARDUPILOT_INDICATION_BUTTON_MAX_SIZE] {};
+    uint8_t buffer[ARDUPILOT_INDICATION_BUTTON_MAX_SIZE];
     uint16_t total_size = ardupilot_indication_Button_encode(&pkt, buffer, !canfdout());
 
     canard_broadcast(ARDUPILOT_INDICATION_BUTTON_SIGNATURE,
@@ -1670,6 +1670,20 @@ void AP_Periph_FW::can_start()
 
 #ifdef HAL_PERIPH_ENABLE_RC_OUT
 #if HAL_WITH_ESC_TELEM
+// try to map the ESC number to a motor number. This is needed
+// for when we have multiple CAN nodes, one for each ESC
+uint8_t AP_Periph_FW::get_motor_number(const uint8_t esc_number) const
+{
+    const auto *channel = SRV_Channels::srv_channel(esc_number);
+    // try to map the ESC number to a motor number. This is needed
+    // for when we have multiple CAN nodes, one for each ESC
+    if (channel == nullptr) {
+        return esc_number;
+    }
+    const int8_t motor_num = channel->get_motor_num();
+    return (motor_num == -1) ? esc_number : motor_num;
+}
+
 /*
   send ESC status packets based on AP_ESC_Telem
  */
@@ -1681,15 +1695,8 @@ void AP_Periph_FW::esc_telem_update()
         mask &= ~(1U<<i);
         const float nan = nanf("");
         uavcan_equipment_esc_Status pkt {};
-        const auto *channel = SRV_Channels::srv_channel(i);
-        // try to map the ESC number to a motor number. This is needed
-        // for when we have multiple CAN nodes, one for each ESC
-        if (channel == nullptr) {
-            pkt.esc_index = i;
-        } else {
-            const int8_t motor_num = channel->get_motor_num();
-            pkt.esc_index = motor_num==-1? i:motor_num;
-        }
+        pkt.esc_index = get_motor_number(i);
+
         if (!esc_telem.get_voltage(i, pkt.voltage)) {
             pkt.voltage = nan;
         }
@@ -1708,10 +1715,17 @@ void AP_Periph_FW::esc_telem_update()
         if (esc_telem.get_raw_rpm(i, rpm)) {
             pkt.rpm = rpm;
         }
-        pkt.power_rating_pct = 0;
+
+#if AP_EXTENDED_ESC_TELEM_ENABLED
+        uint8_t power_rating_pct;
+        if (esc_telem.get_power_percentage(i, power_rating_pct)) {
+            pkt.power_rating_pct = power_rating_pct;
+        }
+#endif
+
         pkt.error_count = 0;
 
-        uint8_t buffer[UAVCAN_EQUIPMENT_ESC_STATUS_MAX_SIZE] {};
+        uint8_t buffer[UAVCAN_EQUIPMENT_ESC_STATUS_MAX_SIZE];
         uint16_t total_size = uavcan_equipment_esc_Status_encode(&pkt, buffer, !canfdout());
         canard_broadcast(UAVCAN_EQUIPMENT_ESC_STATUS_SIGNATURE,
                          UAVCAN_EQUIPMENT_ESC_STATUS_ID,
@@ -1721,6 +1735,73 @@ void AP_Periph_FW::esc_telem_update()
     }
 }
 #endif // HAL_WITH_ESC_TELEM
+
+#if AP_EXTENDED_ESC_TELEM_ENABLED
+void AP_Periph_FW::esc_telem_extended_update(const uint32_t &now_ms)
+{
+    if (g.esc_extended_telem_rate <= 0) {
+        // Not configured to send
+        return;
+    }
+
+    uint32_t mask = esc_telem.get_active_esc_mask();
+    if (mask == 0) {
+        // No ESCs to report
+        return;
+    }
+
+    // ESCs are sent in turn to minimise used bandwidth, to make the rate param match the status message we multiply
+    // the period such that the param gives the per-esc rate
+    const uint32_t update_period_ms = 1000 / constrain_int32(g.esc_extended_telem_rate.get() * __builtin_popcount(mask), 1, 1000);
+    if (now_ms - last_esc_telem_extended_update < update_period_ms) {
+        // Too soon!
+        return;
+    }
+    last_esc_telem_extended_update = now_ms;
+
+    for (uint8_t i = 0; i < ESC_TELEM_MAX_ESCS; i++) {
+        // Send each ESC in turn
+        const uint8_t index = (last_esc_telem_extended_sent_id + 1 + i) % ESC_TELEM_MAX_ESCS;
+
+        if ((mask & (1U << index)) == 0) {
+            // Not enabled
+            continue;
+        }
+
+        uavcan_equipment_esc_StatusExtended pkt {};
+
+        // Only send if we have data
+        bool have_data = false;
+
+        int16_t motor_temp_cdeg;
+        if (esc_telem.get_motor_temperature(index, motor_temp_cdeg)) {
+            // Convert from centi-degrees to degrees
+            pkt.motor_temperature_degC = motor_temp_cdeg * 0.01;
+            have_data = true;
+        }
+
+        have_data |= esc_telem.get_input_duty(index, pkt.input_pct);
+        have_data |= esc_telem.get_output_duty(index, pkt.output_pct);
+        have_data |= esc_telem.get_flags(index, pkt.status_flags);
+
+        if (have_data) {
+            pkt.esc_index = get_motor_number(index);
+
+            uint8_t buffer[UAVCAN_EQUIPMENT_ESC_STATUSEXTENDED_MAX_SIZE];
+            const uint16_t total_size = uavcan_equipment_esc_StatusExtended_encode(&pkt, buffer, !canfdout());
+
+            canard_broadcast(UAVCAN_EQUIPMENT_ESC_STATUSEXTENDED_SIGNATURE,
+                                UAVCAN_EQUIPMENT_ESC_STATUSEXTENDED_ID,
+                                CANARD_TRANSFER_PRIORITY_LOW,
+                                &buffer[0],
+                                total_size);
+        }
+
+        last_esc_telem_extended_sent_id = index;
+        break;
+    }
+}
+#endif
 
 #ifdef HAL_PERIPH_ENABLE_ESC_APD
 void AP_Periph_FW::apd_esc_telem_update()
@@ -1744,7 +1825,7 @@ void AP_Periph_FW::apd_esc_telem_update()
             pkt.power_rating_pct = t.power_rating_pct;
             pkt.error_count = t.error_count;
 
-            uint8_t buffer[UAVCAN_EQUIPMENT_ESC_STATUS_MAX_SIZE] {};
+            uint8_t buffer[UAVCAN_EQUIPMENT_ESC_STATUS_MAX_SIZE];
             uint16_t total_size = uavcan_equipment_esc_Status_encode(&pkt, buffer, !canfdout());
             canard_broadcast(UAVCAN_EQUIPMENT_ESC_STATUS_SIGNATURE,
                             UAVCAN_EQUIPMENT_ESC_STATUS_ID,
@@ -1913,7 +1994,7 @@ void can_vprintf(uint8_t severity, const char *fmt, va_list ap)
         memcpy(pkt.text.data, &buffer_data[buffer_offset], pkt.text.len);
         buffer_offset += pkt.text.len;
 
-        uint8_t buffer_packet[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE] {};
+        uint8_t buffer_packet[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE];
         const uint32_t len = uavcan_protocol_debug_LogMessage_encode(&pkt, buffer_packet, !periph.canfdout());
 
         periph.canard_broadcast(UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_SIGNATURE,
@@ -1925,7 +2006,7 @@ void can_vprintf(uint8_t severity, const char *fmt, va_list ap)
     
 #else
     uavcan_protocol_debug_LogMessage pkt {};
-    uint8_t buffer[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE] {};
+    uint8_t buffer[UAVCAN_PROTOCOL_DEBUG_LOGMESSAGE_MAX_SIZE];
     uint32_t n = vsnprintf((char*)pkt.text.data, sizeof(pkt.text.data), fmt, ap);
     pkt.level.value = level;
     pkt.text.len = MIN(n, sizeof(pkt.text.data));
