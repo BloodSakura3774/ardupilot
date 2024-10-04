@@ -1,3 +1,5 @@
+#include "AP_NavEKF3.h"
+
 #include <AP_HAL/AP_HAL.h>
 
 #include "AP_NavEKF3_core.h"
@@ -816,7 +818,7 @@ bool NavEKF3::InitialiseFilter(void)
         }
 
         //try to allocate from CCM RAM, fallback to Normal RAM if not available or full
-        core = (NavEKF3_core*)dal.malloc_type(sizeof(NavEKF3_core)*num_cores, dal.MEM_FAST);
+        core = (NavEKF3_core*)dal.malloc_type(sizeof(NavEKF3_core)*num_cores, AP_DAL::MemoryType::FAST);
         if (core == nullptr) {
             _enable.set(0);
             num_cores = 0;
@@ -1110,7 +1112,7 @@ void NavEKF3::setPosVelYawSourceSet(uint8_t source_set_idx)
     if (source_set_idx < AP_NAKEKF_SOURCE_SET_MAX) {
         dal.log_event3(AP_DAL::Event(uint8_t(AP_DAL::Event::setSourceSet0)+source_set_idx));
     }
-    sources.setPosVelYawSourceSet(source_set_idx);
+    sources.setPosVelYawSourceSet((AP_NavEKF_Source::SourceSetSelection)source_set_idx);
 }
 
 // Check basic filter health metrics and return a consolidated health status
@@ -1339,7 +1341,7 @@ uint8_t NavEKF3::getActiveAirspeed() const
     if (core) {
         return core[primary].getActiveAirspeed();
     } else {
-        return 255;
+        return UINT8_MAX;
     }
 }
 

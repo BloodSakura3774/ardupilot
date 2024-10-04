@@ -136,6 +136,8 @@ class ExtractFeatures(object):
             ('AP_CAMERA_ENABLED', 'AP_Camera::var_info',),
             ('AP_CAMERA_{type}_ENABLED', 'AP_Camera_(?P<type>.*)::trigger_pic',),
             ('AP_CAMERA_SEND_FOV_STATUS_ENABLED', 'AP_Camera::send_camera_fov_status'),
+            ('AP_CAMERA_SEND_THERMAL_RANGE_ENABLED', 'AP_Camera::send_camera_thermal_range'),
+            ('AP_CAMERA_INFO_FROM_SCRIPT_ENABLED', 'AP_Camera_Backend::set_camera_information'),
             ('HAL_RUNCAM_ENABLED', 'AP_RunCam::AP_RunCam',),
 
             ('HAL_PROXIMITY_ENABLED', 'AP_Proximity::AP_Proximity',),
@@ -170,6 +172,7 @@ class ExtractFeatures(object):
             ('AP_CHECK_FIRMWARE_ENABLED', 'AP_CheckFirmware::check_signed_bootloader',),
 
             ('HAL_QUADPLANE_ENABLED', 'QuadPlane::QuadPlane',),
+            ('AP_PLANE_GLIDER_PULLUP_ENABLED', 'GliderPullup::in_pullup',),
             ('QAUTOTUNE_ENABLED', 'ModeQAutotune::_enter',),
             ('HAL_SOARING_ENABLED', 'SoaringController::var_info',),
             ('HAL_LANDING_DEEPSTALL_ENABLED', r'AP_Landing_Deepstall::override_servos',),
@@ -252,6 +255,7 @@ class ExtractFeatures(object):
             ('AP_MAVLINK_MSG_RC_CHANNELS_RAW_ENABLED', r'GCS_MAVLINK::send_rc_channels_raw\b'),
             ('AP_MAVLINK_FTP_ENABLED', 'GCS_MAVLINK::ftp_worker'),
             ('AP_MAVLINK_MAV_CMD_SET_HAGL_ENABLED', 'Plane::handle_external_hagl'),
+            ('AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED', 'AP_Camera::send_video_stream_information'),
 
             ('AP_DRONECAN_HIMARK_SERVO_SUPPORT', 'AP_DroneCAN::SRV_send_himark'),
             ('AP_DRONECAN_HOBBYWING_ESC_SUPPORT', 'AP_DroneCAN::hobbywing_ESC_update'),
@@ -260,6 +264,7 @@ class ExtractFeatures(object):
             ('AP_DRONECAN_SERIAL_ENABLED', 'AP_DroneCAN_Serial::update'),
             ('AP_SERIALMANAGER_IMUOUT_ENABLED', 'AP_InertialSensor::send_uart_data'),
             ('AP_NETWORKING_BACKEND_PPP', 'AP_Networking_PPP::init'),
+            ('AP_NETWORKING_CAN_MCAST_ENABLED', 'AP_Networking_CAN::start'),
             ('FORCE_APJ_DEFAULT_PARAMETERS', 'AP_Param::param_defaults_data'),
             ('HAL_BUTTON_ENABLED', 'AP_Button::update'),
             ('HAL_LOGGING_ENABLED', 'AP_Logger::init'),

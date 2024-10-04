@@ -225,6 +225,20 @@ void GCS_MAVLINK::send_power_status(void)
                                   hal.analogin->power_status_flags());
 }
 
+#if AP_SCHEDULER_ENABLED
+// cap the MAVLink message rate. It can't be greater than 0.8 * SCHED_LOOP_RATE
+uint16_t GCS_MAVLINK::cap_message_interval(uint16_t interval_ms) const
+{
+    if (interval_ms == 0) {
+        return 0;
+    }
+    if (interval_ms*800 < AP::scheduler().get_loop_period_us()) {
+        return AP::scheduler().get_loop_period_us()/800.0f;
+    }
+    return interval_ms;
+}
+#endif
+
 #if HAL_WITH_MCU_MONITORING
 // report MCU voltage/temperature status
 void GCS_MAVLINK::send_mcu_status(void)
@@ -1049,8 +1063,10 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_RANGEFINDER,           MSG_RANGEFINDER},
 #endif
         { MAVLINK_MSG_ID_DISTANCE_SENSOR,       MSG_DISTANCE_SENSOR},
-            // request also does report:
-        { MAVLINK_MSG_ID_TERRAIN_REQUEST,       MSG_TERRAIN},
+#if AP_TERRAIN_AVAILABLE
+        { MAVLINK_MSG_ID_TERRAIN_REQUEST,       MSG_TERRAIN_REQUEST},
+        { MAVLINK_MSG_ID_TERRAIN_REPORT,        MSG_TERRAIN_REPORT},
+#endif
 #if AP_MAVLINK_BATTERY2_ENABLED
         { MAVLINK_MSG_ID_BATTERY2,              MSG_BATTERY2},
 #endif
@@ -1060,7 +1076,13 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_CAMERA_SETTINGS,       MSG_CAMERA_SETTINGS},
         { MAVLINK_MSG_ID_CAMERA_FOV_STATUS,     MSG_CAMERA_FOV_STATUS},
         { MAVLINK_MSG_ID_CAMERA_CAPTURE_STATUS, MSG_CAMERA_CAPTURE_STATUS},
-#endif
+#if AP_CAMERA_SEND_THERMAL_RANGE_ENABLED
+        { MAVLINK_MSG_ID_CAMERA_THERMAL_RANGE,  MSG_CAMERA_THERMAL_RANGE},
+#endif // AP_CAMERA_SEND_THERMAL_RANGE_ENABLED
+#if AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED
+        { MAVLINK_MSG_ID_VIDEO_STREAM_INFORMATION, MSG_VIDEO_STREAM_INFORMATION},
+#endif // AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED
+#endif // AP_CAMERA_ENABLED
 #if HAL_MOUNT_ENABLED
         { MAVLINK_MSG_ID_GIMBAL_DEVICE_ATTITUDE_STATUS, MSG_GIMBAL_DEVICE_ATTITUDE_STATUS},
         { MAVLINK_MSG_ID_AUTOPILOT_STATE_FOR_GIMBAL_DEVICE, MSG_AUTOPILOT_STATE_FOR_GIMBAL_DEVICE},
@@ -1122,6 +1144,9 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
 #endif
 #if AP_MAVLINK_MSG_RELAY_STATUS_ENABLED
         { MAVLINK_MSG_ID_RELAY_STATUS, MSG_RELAY_STATUS},
+#endif
+#if AP_AIRSPEED_ENABLED
+        { MAVLINK_MSG_ID_AIRSPEED, MSG_AIRSPEED},
 #endif
             };
 
@@ -1646,11 +1671,7 @@ bool GCS_MAVLINK::set_ap_message_interval(enum ap_message id, uint16_t interval_
     }
 
 #if AP_SCHEDULER_ENABLED
-    // send messages out at most 80% of main loop rate
-    if (interval_ms != 0 &&
-        interval_ms*800 < AP::scheduler().get_loop_period_us()) {
-        interval_ms = AP::scheduler().get_loop_period_us()/800.0f;
-    }
+    interval_ms = cap_message_interval(interval_ms);
 #endif
 
     // check if it's a specially-handled message:
@@ -1854,14 +1875,25 @@ GCS_MAVLINK::update_receive(uint32_t max_time_us)
         bool parsed_packet = false;
 
         // Try to get a new message
-        if (mavlink_frame_char_buffer(channel_buffer(), channel_status(), c, &msg, &status) == MAVLINK_FRAMING_OK) {
+        const uint8_t framing = mavlink_frame_char_buffer(channel_buffer(), channel_status(), c, &msg, &status);
+        if (framing == MAVLINK_FRAMING_OK) {
             hal.util->persistent_data.last_mavlink_msgid = msg.msgid;
             packetReceived(status, msg);
             parsed_packet = true;
             gcs_alternative_active[chan] = false;
             alternative.last_mavlink_ms = now_ms;
             hal.util->persistent_data.last_mavlink_msgid = 0;
+
         }
+#if AP_SCRIPTING_ENABLED
+        else if (framing == MAVLINK_FRAMING_BAD_CRC) {
+            // This may be a valid message that we don't know the crc extra for, pass it to scripting which might
+            AP_Scripting *scripting = AP_Scripting::get_singleton();
+            if (scripting != nullptr) {
+                scripting->handle_message(msg, chan);
+            }
+        }
+#endif // AP_SCRIPTING_ENABLED
 
         if (parsed_packet || i % 100 == 0) {
             // make sure we don't spend too much time parsing mavlink messages
@@ -2323,6 +2355,60 @@ void GCS_MAVLINK::send_scaled_pressure3()
 {
     send_scaled_pressure_instance(2, mavlink_msg_scaled_pressure3_send);
 }
+
+#if AP_AIRSPEED_ENABLED
+void GCS_MAVLINK::send_airspeed()
+{
+    AP_Airspeed *airspeed = AP_Airspeed::get_singleton();
+    if (airspeed == nullptr) {
+        return;
+    }
+
+    for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+        // Try and send the next sensor
+        const uint8_t index = (last_airspeed_idx + 1 + i) % AIRSPEED_MAX_SENSORS;
+        if (!airspeed->enabled(index)) {
+            continue;
+        }
+
+        float temperature_float;
+        int16_t temperature = INT16_MAX;
+        if (airspeed->get_temperature(index, temperature_float)) {
+            temperature = int16_t(temperature_float * 100);
+        }
+
+        uint8_t flags = 0;
+        // Set unhealthy flag
+        if (!airspeed->healthy(index)) {
+            flags |= 1U << AIRSPEED_SENSOR_FLAGS::AIRSPEED_SENSOR_UNHEALTHY;
+        }
+
+#if AP_AHRS_ENABLED
+        // Set using flag if the AHRS is using this sensor
+        const AP_AHRS &ahrs = AP::ahrs();
+        if (ahrs.using_airspeed_sensor() && (ahrs.get_active_airspeed_index() == index)) {
+            flags |= 1U << AIRSPEED_SENSOR_FLAGS::AIRSPEED_SENSOR_USING;
+        }
+#endif
+
+        // Assemble message and send
+        const mavlink_airspeed_t msg {
+            airspeed    : airspeed->get_airspeed(index),
+            raw_press   : airspeed->get_differential_pressure(index),
+            temperature : temperature,
+            id          : index,
+            flags       : flags
+        };
+
+        mavlink_msg_airspeed_send_struct(chan, &msg);
+
+        // Only send one msg per call
+        last_airspeed_idx = index;
+        return;
+    }
+
+}
+#endif // AP_AIRSPEED_ENABLED
 
 #if AP_AHRS_ENABLED
 void GCS_MAVLINK::send_ahrs()
@@ -3029,6 +3115,9 @@ MAV_RESULT GCS_MAVLINK::handle_command_do_aux_function(const mavlink_command_int
 
 MAV_RESULT GCS_MAVLINK::handle_command_set_message_interval(const mavlink_command_int_t &packet)
 {
+    if (!is_zero(packet.param3)) {
+        return MAV_RESULT_DENIED;
+    }
     return set_message_interval((uint32_t)packet.param1, (int32_t)packet.param2);
 }
 
@@ -3064,6 +3153,12 @@ MAV_RESULT GCS_MAVLINK::set_message_interval(uint32_t msg_id, int32_t interval_u
     } else {
         interval_ms = interval_us / 1000;
     }
+#if AP_SCHEDULER_ENABLED
+    if (interval_ms != 0 && cap_message_interval(interval_ms) > interval_ms) {
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Requested rate for message ID %u too fast. Increase SCHED_LOOP_RATE", (unsigned int)msg_id);
+        return MAV_RESULT_DENIED;
+    }
+#endif
     if (set_ap_message_interval(id, interval_ms)) {
         return MAV_RESULT_ACCEPTED;
     }
@@ -3149,13 +3244,8 @@ MAV_RESULT GCS_MAVLINK::handle_command_get_message_interval(const mavlink_comman
     }
 
     uint16_t interval_ms = 0;
-    if (!get_ap_message_interval(id, interval_ms)) {
+    if (!get_ap_message_interval(id, interval_ms) || interval_ms == 0) {
         // not streaming this message at the moment...
-        mavlink_msg_message_interval_send(chan, mavlink_id, -1); // disabled
-        return MAV_RESULT_ACCEPTED;
-    }
-
-    if (interval_ms == 0) {
         mavlink_msg_message_interval_send(chan, mavlink_id, -1); // disabled
         return MAV_RESULT_ACCEPTED;
     }
@@ -4817,7 +4907,7 @@ MAV_RESULT GCS_MAVLINK::handle_command_set_ekf_source_set(const mavlink_command_
     uint32_t source_set = uint32_t(packet.param1);
     if ((source_set >= 1) && (source_set <= 3)) {
         // mavlink command uses range 1 to 3 while ahrs interface accepts 0 to 2
-        AP::ahrs().set_posvelyaw_source_set(source_set-1);
+        AP::ahrs().set_posvelyaw_source_set((AP_NavEKF_Source::SourceSetSelection)(source_set-1));
         return MAV_RESULT_ACCEPTED;
     }
     return MAV_RESULT_DENIED;
@@ -5233,6 +5323,21 @@ MAV_RESULT GCS_MAVLINK::handle_command_int_external_position_estimate(const mavl
 }
 #endif // AP_AHRS_POSITION_RESET_ENABLED
 
+#if AP_AHRS_EXTERNAL_WIND_ESTIMATE_ENABLED
+MAV_RESULT GCS_MAVLINK::handle_command_int_external_wind_estimate(const mavlink_command_int_t &packet)
+{
+    if (packet.param1 < 0) {
+        return MAV_RESULT_DENIED;
+    }
+    if (packet.param3 < 0 || packet.param3 > 360) {
+        return MAV_RESULT_DENIED;
+    }
+
+    AP::ahrs().set_external_wind_estimate(packet.param1, packet.param3);
+    return MAV_RESULT_ACCEPTED;
+}
+#endif // AP_AHRS_EXTERNAL_WIND_ESTIMATE_ENABLED
+
 MAV_RESULT GCS_MAVLINK::handle_command_do_set_roi(const mavlink_command_int_t &packet)
 {
     // be aware that this method is called for both MAV_CMD_DO_SET_ROI
@@ -5414,6 +5519,10 @@ MAV_RESULT GCS_MAVLINK::handle_command_int_packet(const mavlink_command_int_t &p
 #if AP_AHRS_POSITION_RESET_ENABLED
     case MAV_CMD_EXTERNAL_POSITION_ESTIMATE:
         return handle_command_int_external_position_estimate(packet);
+#endif
+#if AP_AHRS_EXTERNAL_WIND_ESTIMATE_ENABLED
+    case MAV_CMD_EXTERNAL_WIND_ESTIMATE:
+        return handle_command_int_external_wind_estimate(packet);
 #endif
 #if AP_ARMING_ENABLED
     case MAV_CMD_COMPONENT_ARM_DISARM:
@@ -6109,6 +6218,12 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
     case MSG_CAMERA_FOV_STATUS:
 #endif
     case MSG_CAMERA_CAPTURE_STATUS:
+#if AP_CAMERA_SEND_THERMAL_RANGE_ENABLED
+    case MSG_CAMERA_THERMAL_RANGE:
+#endif
+#if AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED
+    case MSG_VIDEO_STREAM_INFORMATION:
+#endif // AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED
         {
             AP_Camera *camera = AP::camera();
             if (camera == nullptr) {
@@ -6259,6 +6374,13 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         CHECK_PAYLOAD_SIZE(SCALED_PRESSURE3);
         send_scaled_pressure3();
         break;
+
+#if AP_AIRSPEED_ENABLED
+    case MSG_AIRSPEED:
+        CHECK_PAYLOAD_SIZE(AIRSPEED);
+        send_airspeed();
+        break;
+#endif
 
     case MSG_SERVO_OUTPUT_RAW:
         CHECK_PAYLOAD_SIZE(SERVO_OUTPUT_RAW);

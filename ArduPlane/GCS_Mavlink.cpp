@@ -423,12 +423,16 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
         // unused
         break;
 
-    case MSG_TERRAIN:
 #if AP_TERRAIN_AVAILABLE
+    case MSG_TERRAIN_REQUEST:
         CHECK_PAYLOAD_SIZE(TERRAIN_REQUEST);
         plane.terrain.send_request(chan);
-#endif
         break;
+    case MSG_TERRAIN_REPORT:
+        CHECK_PAYLOAD_SIZE(TERRAIN_REPORT);
+        plane.terrain.send_report(chan);
+        break;
+#endif
 
     case MSG_WIND:
         CHECK_PAYLOAD_SIZE(WIND);
@@ -508,7 +512,7 @@ void GCS_MAVLINK_Plane::send_hygrometer()
 const AP_Param::GroupInfo GCS_MAVLINK_Parameters::var_info[] = {
     // @Param: RAW_SENS
     // @DisplayName: Raw sensor stream rate
-    // @Description: MAVLink Stream rate of RAW_IMU, SCALED_IMU2, SCALED_IMU3, SCALED_PRESSURE, SCALED_PRESSURE2, and SCALED_PRESSURE3
+    // @Description: MAVLink Stream rate of RAW_IMU, SCALED_IMU2, SCALED_IMU3, SCALED_PRESSURE, SCALED_PRESSURE2, SCALED_PRESSURE3 and AIRSPEED
     // @Units: Hz
     // @Range: 0 50
     // @Increment: 1
@@ -577,7 +581,7 @@ const AP_Param::GroupInfo GCS_MAVLINK_Parameters::var_info[] = {
 
     // @Param: EXTRA3
     // @DisplayName: Extra data type 3 stream rate
-    // @Description: MAVLink Stream rate of AHRS, SYSTEM_TIME, WIND, RANGEFINDER, DISTANCE_SENSOR, TERRAIN_REQUEST, BATTERY2, GIMBAL_DEVICE_ATTITUDE_STATUS, OPTICAL_FLOW, MAG_CAL_REPORT, MAG_CAL_PROGRESS, EKF_STATUS_REPORT, VIBRATION, and BATTERY_STATUS
+    // @Description: MAVLink Stream rate of AHRS, SYSTEM_TIME, WIND, RANGEFINDER, DISTANCE_SENSOR, TERRAIN_REQUEST, TERRAIN_REPORT, BATTERY2, GIMBAL_DEVICE_ATTITUDE_STATUS, OPTICAL_FLOW, MAG_CAL_REPORT, MAG_CAL_PROGRESS, EKF_STATUS_REPORT, VIBRATION, and BATTERY_STATUS
     // @Units: Hz
     // @Range: 0 50
     // @Increment: 1
@@ -614,6 +618,9 @@ static const ap_message STREAM_RAW_SENSORS_msgs[] = {
     MSG_SCALED_PRESSURE,
     MSG_SCALED_PRESSURE2,
     MSG_SCALED_PRESSURE3,
+#if AP_AIRSPEED_ENABLED
+    MSG_AIRSPEED,
+#endif
 };
 static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {
     MSG_SYS_STATUS,
@@ -683,7 +690,8 @@ static const ap_message STREAM_EXTRA3_msgs[] = {
     MSG_DISTANCE_SENSOR,
     MSG_SYSTEM_TIME,
 #if AP_TERRAIN_AVAILABLE
-    MSG_TERRAIN,
+    MSG_TERRAIN_REPORT,
+    MSG_TERRAIN_REQUEST,
 #endif
 #if AP_BATTERY_ENABLED
     MSG_BATTERY_STATUS,
@@ -929,48 +937,25 @@ MAV_RESULT GCS_MAVLINK_Plane::handle_command_int_guided_slew_commands(const mavl
             return MAV_RESULT_DENIED;
         }
 
-         // the requested alt data might be relative or absolute
-        float new_target_alt = packet.z * 100;
-        float new_target_alt_rel = packet.z * 100 + plane.home.alt;
-
-         // only global/relative/terrain frames are supported
-        switch(packet.frame) {
-            case MAV_FRAME_GLOBAL_RELATIVE_ALT: {
-                if   (is_equal(plane.guided_state.target_alt,new_target_alt_rel) ) { // compare two floats as near-enough
-                    // no need to process any new packet/s with the same ALT any further, if we are already doing it.
-                    return MAV_RESULT_ACCEPTED;
-                }
-                plane.guided_state.target_alt = new_target_alt_rel;
-                break;
-            }
-            case MAV_FRAME_GLOBAL: {
-                if   (is_equal(plane.guided_state.target_alt,new_target_alt) ) {  // compare two floats as near-enough
-                    // no need to process any new packet/s with the same ALT any further, if we are already doing it.
-                    return MAV_RESULT_ACCEPTED;
-                }
-                plane.guided_state.target_alt = new_target_alt;
-                break;
-            }
-            default:
-                //  MAV_RESULT_DENIED  means Command is invalid (is supported but has invalid parameters).
-                return MAV_RESULT_DENIED;
+        Location::AltFrame new_target_alt_frame;
+        if (!mavlink_coordinate_frame_to_location_alt_frame((MAV_FRAME)packet.frame, new_target_alt_frame)) {
+            return MAV_RESULT_DENIED;
         }
+        // keep a copy of what came in via MAVLink - this is needed for logging, but not for anything else
+        plane.guided_state.target_mav_frame = packet.frame;
 
-        plane.guided_state.target_alt_frame = packet.frame;
-        plane.guided_state.last_target_alt = plane.current_loc.alt; // FIXME: Reference frame is not corrected for here
+        const int32_t new_target_alt_cm = packet.z * 100;
+        plane.guided_state.target_location.set_alt_cm(new_target_alt_cm, new_target_alt_frame); 
         plane.guided_state.target_alt_time_ms = AP_HAL::millis();
 
+        // param3 contains the desired vertical velocity (not acceleration)
         if (is_zero(packet.param3)) {
-            // the user wanted /maximum acceleration, pick a large value as close enough
-            plane.guided_state.target_alt_accel = 1000.0;
+            // the user wanted /maximum altitude change rate, pick a large value as close enough
+            plane.guided_state.target_alt_rate = 1000.0;
         } else {
-            plane.guided_state.target_alt_accel = fabsf(packet.param3);
+            plane.guided_state.target_alt_rate = fabsf(packet.param3);
         }
 
-         // assign an acceleration direction
-        if (plane.guided_state.target_alt < plane.current_loc.alt) {
-            plane.guided_state.target_alt_accel *= -1.0f;
-        }
         return MAV_RESULT_ACCEPTED;
     }
 

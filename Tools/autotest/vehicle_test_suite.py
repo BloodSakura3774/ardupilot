@@ -472,13 +472,17 @@ class WaitAndMaintain(object):
                  minimum_duration=None,
                  progress_print_interval=1,
                  timeout=30,
+                 epsilon=None,
+                 comparator=None,
                  ):
         self.test_suite = test_suite
         self.minimum_duration = minimum_duration
         self.achieving_duration_start = None
         self.timeout = timeout
+        self.epsilon = epsilon
         self.last_progress_print = 0
         self.progress_print_interval = progress_print_interval
+        self.comparator = comparator
 
     def run(self):
         self.announce_test_start()
@@ -533,7 +537,14 @@ class WaitAndMaintain(object):
         return f"want={self.get_target_value()} got={value}"
 
     def validate_value(self, value):
-        return value == self.get_target_value()
+        target_value = self.get_target_value()
+        if self.comparator is not None:
+            return self.comparator(value, target_value)
+
+        if self.epsilon is not None:
+            return (abs(value - target_value) <= self.epsilon)
+
+        return value == target_value
 
     def timeoutexception(self):
         return AutoTestTimeoutException("Failed to attain or maintain value")
@@ -673,6 +684,35 @@ class WaitAndMaintainArmed(WaitAndMaintain):
 
     def announce_start_text(self):
         return "Ensuring vehicle remains armed"
+
+
+class WaitAndMaintainServoChannelValue(WaitAndMaintain):
+    def __init__(self, test_suite, channel, value, **kwargs):
+        super(WaitAndMaintainServoChannelValue, self).__init__(test_suite, **kwargs)
+        self.channel = channel
+        self.value = value
+
+    def announce_start_text(self):
+        str_operator = ""
+        if self.comparator == operator.lt:
+            str_operator = "less than "
+        elif self.comparator == operator.gt:
+            str_operator = "more than "
+
+        return f"Waiting for SERVO_OUTPUT_RAW.servo{self.channel}_value value {str_operator}{self.value}"
+
+    def get_target_value(self):
+        return self.value
+
+    def get_current_value(self):
+        m = self.test_suite.assert_receive_message('SERVO_OUTPUT_RAW', timeout=10)
+        channel_field = "servo%u_raw" % self.channel
+        m_value = getattr(m, channel_field, None)
+        if m_value is None:
+            raise ValueError(f"message ({str(m)}) has no field {channel_field}")
+
+        self.last_SERVO_OUTPUT_RAW = m
+        return m_value
 
 
 class MSP_Generic(Telem):
@@ -1865,6 +1905,7 @@ class TestSuite(ABC):
                  num_aux_imus=0,
                  dronecan_tests=False,
                  generate_junit=False,
+                 enable_fgview=False,
                  build_opts={}):
 
         self.start_time = time.time()
@@ -1931,6 +1972,7 @@ class TestSuite(ABC):
         self.last_heartbeat_time_wc_s = 0
         self.in_drain_mav = False
         self.tlog = None
+        self.enable_fgview = enable_fgview
 
         self.rc_thread = None
         self.rc_thread_should_quit = False
@@ -2517,64 +2559,15 @@ class TestSuite(ABC):
     def get_sim_parameter_documentation_get_whitelist(self):
         # common parameters
         ret = set([
-            "SIM_ACC_FILE_RW",
             "SIM_ACC_TRIM_X",
             "SIM_ACC_TRIM_Y",
             "SIM_ACC_TRIM_Z",
-            "SIM_ADSB_ALT",
-            "SIM_ADSB_COUNT",
-            "SIM_ADSB_RADIUS",
-            "SIM_ADSB_TX",
             "SIM_ARSPD2_OFS",
             "SIM_ARSPD2_RND",
             "SIM_ARSPD_OFS",
             "SIM_ARSPD_RND",
-            "SIM_BAR2_DELAY",
-            "SIM_BAR2_DISABLE",
-            "SIM_BAR2_DRIFT",
-            "SIM_BAR2_FREEZE",
-            "SIM_BAR2_WCF_BAK",
-            "SIM_BAR2_WCF_DN",
-            "SIM_BAR2_WCF_FWD",
-            "SIM_BAR2_WCF_LFT",
-            "SIM_BAR2_WCF_RGT",
-            "SIM_BAR2_WCF_UP",
-            "SIM_BAR3_DELAY",
-            "SIM_BAR3_DISABLE",
-            "SIM_BAR3_DRIFT",
-            "SIM_BAR3_FREEZE",
-            "SIM_BAR3_WCF_BAK",
-            "SIM_BAR3_WCF_DN",
-            "SIM_BAR3_WCF_FWD",
-            "SIM_BAR3_WCF_LFT",
-            "SIM_BAR3_WCF_RGT",
-            "SIM_BAR3_WCF_UP",
-            "SIM_BARO_COUNT",
-            "SIM_BARO_DELAY",
-            "SIM_BARO_DISABLE",
-            "SIM_BARO_FREEZE",
-            "SIM_BARO_WCF_BAK",
-            "SIM_BARO_WCF_DN",
-            "SIM_BARO_WCF_FWD",
-            "SIM_BARO_WCF_LFT",
-            "SIM_BARO_WCF_RGT",
-            "SIM_BARO_WCF_UP",
-            "SIM_BATT_CAP_AH",
-            "SIM_BAUDLIMIT_EN",
-            "SIM_DRIFT_SPEED",
-            "SIM_DRIFT_TIME",
-            "SIM_EFI_TYPE",
-            "SIM_ESC_ARM_RPM",
             "SIM_FTOWESC_ENA",
             "SIM_FTOWESC_POW",
-            "SIM_GND_BEHAV",
-            "SIM_GYR1_RND",
-            "SIM_GYR2_RND",
-            "SIM_GYR3_RND",
-            "SIM_GYR4_RND",
-            "SIM_GYR5_RND",
-            "SIM_GYR_FAIL_MSK",
-            "SIM_GYR_FILE_RW",
             "SIM_IE24_ENABLE",
             "SIM_IE24_ERROR",
             "SIM_IE24_STATE",
@@ -2683,15 +2676,6 @@ class TestSuite(ABC):
             "SIM_IMUT5_GYR3_Z",
             "SIM_IMUT5_TMAX",
             "SIM_IMUT5_TMIN",
-            "SIM_IMUT_END",
-            "SIM_IMUT_FIXED",
-            "SIM_IMUT_START",
-            "SIM_IMUT_TCONST",
-            "SIM_INS_THR_MIN",
-            "SIM_LED_LAYOUT",
-            "SIM_LOOP_DELAY",
-            "SIM_MAG1_SCALING",
-            "SIM_MAG2_DEVID",
             "SIM_MAG2_DIA_X",
             "SIM_MAG2_DIA_Y",
             "SIM_MAG2_DIA_Z",
@@ -2701,9 +2685,6 @@ class TestSuite(ABC):
             "SIM_MAG2_OFS_X",
             "SIM_MAG2_OFS_Y",
             "SIM_MAG2_OFS_Z",
-            "SIM_MAG2_ORIENT",
-            "SIM_MAG2_SCALING",
-            "SIM_MAG3_DEVID",
             "SIM_MAG3_DIA_X",
             "SIM_MAG3_DIA_Y",
             "SIM_MAG3_DIA_Z",
@@ -2713,18 +2694,9 @@ class TestSuite(ABC):
             "SIM_MAG3_OFS_X",
             "SIM_MAG3_OFS_Y",
             "SIM_MAG3_OFS_Z",
-            "SIM_MAG3_ORIENT",
-            "SIM_MAG3_SCALING",
-            "SIM_MAG4_DEVID",
-            "SIM_MAG5_DEVID",
-            "SIM_MAG6_DEVID",
-            "SIM_MAG7_DEVID",
-            "SIM_MAG8_DEVID",
-            "SIM_MAG_ALY_HGT",
             "SIM_MAG_ALY_X",
             "SIM_MAG_ALY_Y",
             "SIM_MAG_ALY_Z",
-            "SIM_MAG_DELAY",
             "SIM_MAG1_DIA_X",
             "SIM_MAG1_DIA_Y",
             "SIM_MAG1_DIA_Z",
@@ -2737,16 +2709,10 @@ class TestSuite(ABC):
             "SIM_MAG1_OFS_X",
             "SIM_MAG1_OFS_Y",
             "SIM_MAG1_OFS_Z",
-            "SIM_MAG1_ORIENT",
-            "SIM_MAG_RND",
-            "SIM_ODOM_ENABLE",
             "SIM_PARA_ENABLE",
             "SIM_PARA_PIN",
-            "SIM_PIN_MASK",
             "SIM_PLD_ALT_LMT",
             "SIM_PLD_DIST_LMT",
-            "SIM_RATE_HZ",
-            "SIM_RC_CHANCOUNT",
             "SIM_RICH_CTRL",
             "SIM_RICH_ENABLE",
             "SIM_SHIP_DSIZE",
@@ -2757,43 +2723,13 @@ class TestSuite(ABC):
             "SIM_SHIP_PSIZE",
             "SIM_SHIP_SPEED",
             "SIM_SHIP_SYSID",
-            "SIM_SHOVE_TIME",
-            "SIM_SHOVE_X",
-            "SIM_SHOVE_Y",
-            "SIM_SHOVE_Z",
-            "SIM_SONAR_GLITCH",
             "SIM_SONAR_POS_X",
             "SIM_SONAR_POS_Y",
             "SIM_SONAR_POS_Z",
-            "SIM_SONAR_RND",
-            "SIM_SONAR_ROT",
-            "SIM_SONAR_SCALE",
             "SIM_TA_ENABLE",
-            "SIM_TEMP_BFACTOR",
-            "SIM_TEMP_BRD_OFF",
-            "SIM_TEMP_START",
-            "SIM_TEMP_TCONST",
-            "SIM_TERRAIN",
-            "SIM_THML_SCENARI",
-            "SIM_TIDE_DIR",
-            "SIM_TIDE_SPEED",
-            "SIM_TIME_JITTER",
-            "SIM_TWIST_TIME",
-            "SIM_TWIST_X",
-            "SIM_TWIST_Y",
-            "SIM_TWIST_Z",
             "SIM_VIB_FREQ_X",
             "SIM_VIB_FREQ_Y",
             "SIM_VIB_FREQ_Z",
-            "SIM_VIB_MOT_HMNC",
-            "SIM_VIB_MOT_MASK",
-            "SIM_VIB_MOT_MAX",
-            "SIM_VIB_MOT_MULT",
-            "SIM_WAVE_AMP",
-            "SIM_WAVE_DIR",
-            "SIM_WAVE_ENABLE",
-            "SIM_WAVE_LENGTH",
-            "SIM_WAVE_SPEED",
         ])
 
         vinfo_key = self.vehicleinfo_key()
@@ -3318,6 +3254,9 @@ class TestSuite(ABC):
     def default_parameter_list(self):
         ret = {
             'LOG_DISARMED': 1,
+            # also lower logging rate to reduce log sizes
+            'LOG_DARM_RATEMAX': 5,
+            'LOG_FILE_RATEMAX': 10,
         }
         if self.force_ahrs_type is not None:
             if self.force_ahrs_type == 2:
@@ -6474,8 +6413,8 @@ class TestSuite(ABC):
                 self.remove_message_hook(hook)
         for script in dead.installed_scripts:
             self.remove_installed_script(script)
-        for (message_id, interval_us) in dead.overridden_message_rates.items():
-            self.set_message_interval(message_id, interval_us)
+        for (message_id, rate_hz) in dead.overridden_message_rates.items():
+            self.set_message_rate_hz(message_id, rate_hz)
         for module in dead.installed_modules:
             print("Removing module (%s)" % module)
             self.remove_installed_modules(module)
@@ -7240,6 +7179,10 @@ class TestSuite(ABC):
                 altitude_source = "GLOBAL_POSITION_INT.relative_alt"
             else:
                 altitude_source = "GLOBAL_POSITION_INT.alt"
+        if altitude_source == "TERRAIN_REPORT.current_height":
+            terrain = self.assert_receive_message('TERRAIN_REPORT')
+            return terrain.current_height
+
         (msg, field) = altitude_source.split('.')
         msg = self.poll_message(msg, quiet=True)
         divisor = 1000.0  # mm is pretty common in mavlink
@@ -7365,13 +7308,13 @@ class TestSuite(ABC):
 
         self.wait_and_maintain(
             value_name="Altitude",
-            target=altitude_min,
+            target=(altitude_min + altitude_max)*0.5,
             current_value_getter=lambda: self.get_altitude(
                 relative=relative,
                 timeout=timeout,
                 altitude_source=altitude_source,
             ),
-            accuracy=(altitude_max - altitude_min),
+            accuracy=(altitude_max - altitude_min)*0.5,
             validator=lambda value2, target2: validator(value2, target2),
             timeout=timeout,
             **kwargs
@@ -7496,8 +7439,8 @@ class TestSuite(ABC):
             )
         return self.wait_and_maintain_range(
             value_name,
-            minimum=target - accuracy/2,
-            maximum=target + accuracy/2,
+            minimum=target - accuracy,
+            maximum=target + accuracy,
             current_value_getter=current_value_getter,
             validator=validator,
             timeout=timeout,
@@ -8031,6 +7974,20 @@ class TestSuite(ABC):
         self.progress("assert SERVO_OUTPUT_RAW.%s=%u %s %u" %
                       (channel_field, m_value, opstring, value))
         if comparator(m_value, value):
+            return m_value
+        raise NotAchievedException("Wrong value")
+
+    def assert_servo_channel_range(self, channel, value_min, value_max):
+        """assert channel value is within the range [value_min, value_max]"""
+        channel_field = "servo%u_raw" % channel
+        m = self.assert_receive_message('SERVO_OUTPUT_RAW', timeout=1)
+        m_value = getattr(m, channel_field, None)
+        if m_value is None:
+            raise ValueError("message (%s) has no field %s" %
+                             (str(m), channel_field))
+        self.progress("assert SERVO_OUTPUT_RAW.%s=%u in [%u, %u]" %
+                      (channel_field, m_value, value_min, value_max))
+        if m_value >= value_min and m_value <= value_max:
             return m_value
         raise NotAchievedException("Wrong value")
 
@@ -9100,6 +9057,7 @@ Also, ignores heartbeats not from our target system'''
             "valgrind": self.valgrind,
             "callgrind": self.callgrind,
             "wipe": True,
+            "enable_fgview": self.enable_fgview,
         }
         start_sitl_args.update(**sitl_args)
         if ("defaults_filepath" not in start_sitl_args or
@@ -10921,6 +10879,14 @@ Also, ignores heartbeats not from our target system'''
         self.context_set_message_rate_hz('VFR_HUD', original_rate*2, run_cmd=self.run_cmd_int)
         if abs(original_rate*2 - round(self.get_message_rate_hz("VFR_HUD", run_cmd=self.run_cmd_int))) > 1:
             raise NotAchievedException("Did not set rate")
+
+        # Try setting a rate well beyond SCHED_LOOP_RATE
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+            p1=mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
+            p2=self.rate_to_interval_us(800),
+            want_result=mavutil.mavlink.MAV_RESULT_DENIED,
+        )
 
         self.start_subtest("Use REQUEST_MESSAGE via COMMAND_INT")
         # 148 is AUTOPILOT_VERSION:
