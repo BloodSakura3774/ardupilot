@@ -430,8 +430,9 @@ int strcmp(const char *s1, const char *s2)
 //simple variant of std c function to reduce used flash space
 size_t strlen(const char *s1)
 {
+    const volatile char *p = s1;
     size_t ret = 0;
-    while (*s1++) ret++;
+    while (*p++) ret++;
     return ret;
 }
 
